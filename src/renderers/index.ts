@@ -1,96 +1,50 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import * as marked
-  from 'marked';
-
-import {
-  IRenderer
-} from '../rendermime';
-
-import {
-  escape_for_html, ansi_to_html
-} from 'ansi_up';
 
 import {
   Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
 
 import {
-  Message
-} from 'phosphor-messaging';
+  RenderMime
+} from '../rendermime';
 
 import {
-  typeset, removeMath, replaceMath
-} from './latex';
+  RenderedHTML, RenderedMarkdown, RenderedText, RenderedImage,
+  RenderedJavascript, RenderedSVG, RenderedPDF, RenderedLatex
+} from './widget';
 
-import {
-  defaultSanitizer
-} from '../sanitizer';
-
-
-// Support GitHub flavored Markdown, leave sanitizing to external library.
-marked.setOptions({ gfm: true, sanitize: false, breaks: true });
-
-
-/**
- * A widget for displaying HTML and rendering math.
- */
-export
-class HTMLWidget extends Widget {
-  constructor(html: string) {
-    super();
-    try {
-      var range = document.createRange();
-      this.node.appendChild(range.createContextualFragment(html));
-    } catch (error) {
-      console.warn('Environment does not support Range ' +
-                   'createContextualFragment, falling back on innerHTML');
-      this.node.innerHTML = html;
-    }
-  }
-
-  /**
-   * A message handler invoked on an `'after-attach'` message.
-   *
-   * ####Notes
-   * If the node is visible, it is typeset.
-   */
-  onAfterAttach(msg: Message) {
-    typeset(this.node);
-  }
-}
-
-/**
- * A widget for displaying text and rendering math.
- */
-export
-class LatexWidget extends Widget {
-  constructor(text: string) {
-    super();
-    this.node.innerHTML = text;
-  }
-
-  /**
-   * A message handler invoked on an `'after-attach'` message.
-   *
-   * ####Notes
-   * If the node is visible, it is typeset.
-   */
-  onAfterAttach(msg: Message) {
-    typeset(this.node);
-  }
-}
 
 /**
  * A renderer for raw html.
  */
 export
-class HTMLRenderer implements IRenderer<Widget> {
+class HTMLRenderer implements RenderMime.IRenderer {
+  /**
+   * The mimetypes this renderer accepts.
+   */
   mimetypes = ['text/html'];
 
-  render(mimetype: string, data: string): Widget {
-    return new HTMLWidget(data);
+  /**
+   * Whether the input can safely sanitized for a given mimetype.
+   */
+  isSanitizable(mimetype: string): boolean {
+    return this.mimetypes.indexOf(mimetype) !== -1;
+  }
+
+  /**
+   * Whether the input is safe without sanitization.
+   */
+  isSafe(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Render the transformed mime bundle.
+   */
+  render(options: RenderMime.IRendererOptions<string>): Widget {
+    return new RenderedHTML(options);
   }
 }
 
@@ -99,15 +53,31 @@ class HTMLRenderer implements IRenderer<Widget> {
  * A renderer for `<img>` data.
  */
 export
-class ImageRenderer implements IRenderer<Widget> {
+class ImageRenderer implements RenderMime.IRenderer {
+  /**
+   * The mimetypes this renderer accepts.
+   */
   mimetypes = ['image/png', 'image/jpeg', 'image/gif'];
 
-  render(mimetype: string, data: string): Widget {
-    let w = new Widget();
-    let img = document.createElement('img');
-    img.src = `data:${mimetype};base64,${data}`;
-    w.node.appendChild(img);
-    return w;
+  /**
+   * Whether the input can safely sanitized for a given mimetype.
+   */
+  isSanitizable(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Whether the input is safe without sanitization.
+   */
+  isSafe(mimetype: string): boolean {
+    return this.mimetypes.indexOf(mimetype) !== -1;
+  }
+
+  /**
+   * Render the transformed mime bundle.
+   */
+  render(options: RenderMime.IRendererOptions<string>): Widget {
+    return new RenderedImage(options);
   }
 }
 
@@ -116,16 +86,31 @@ class ImageRenderer implements IRenderer<Widget> {
  * A renderer for plain text and Jupyter console text data.
  */
 export
-class TextRenderer implements IRenderer<Widget> {
+class TextRenderer implements RenderMime.IRenderer {
+  /**
+   * The mimetypes this renderer accepts.
+   */
   mimetypes = ['text/plain', 'application/vnd.jupyter.console-text'];
 
-  render(mimetype: string, data: string): Widget {
-    let w = new Widget();
-    let el = document.createElement('pre');
-    let esc = escape_for_html(data);
-    el.innerHTML = ansi_to_html(esc);
-    w.node.appendChild(el);
-    return w;
+  /**
+   * Whether the input can safely sanitized for a given mimetype.
+   */
+  isSanitizable(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Whether the input is safe without sanitization.
+   */
+  isSafe(mimetype: string): boolean {
+    return this.mimetypes.indexOf(mimetype) !== -1;
+  }
+
+  /**
+   * Render the transformed mime bundle.
+   */
+  render(options: RenderMime.IRendererOptions<string>): Widget {
+    return new RenderedText(options);
   }
 }
 
@@ -134,16 +119,31 @@ class TextRenderer implements IRenderer<Widget> {
  * A renderer for raw `<script>` data.
  */
 export
-class JavascriptRenderer implements IRenderer<Widget> {
+class JavascriptRenderer implements RenderMime.IRenderer {
+  /**
+   * The mimetypes this renderer accepts.
+   */
   mimetypes = ['text/javascript', 'application/javascript'];
 
-  render(mimetype: string, data: string): Widget {
-    let w = new Widget();
-    let s = document.createElement('script');
-    s.type = mimetype;
-    s.textContent = data;
-    w.node.appendChild(s);
-    return w;
+  /**
+   * Whether the input can safely sanitized for a given mimetype.
+   */
+  isSanitizable(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Whether the input is safe without sanitization.
+   */
+  isSafe(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Render the transformed mime bundle.
+   */
+  render(options: RenderMime.IRendererOptions<string>): Widget {
+    return new RenderedJavascript(options);
   }
 }
 
@@ -152,17 +152,31 @@ class JavascriptRenderer implements IRenderer<Widget> {
  * A renderer for `<svg>` data.
  */
 export
-class SVGRenderer implements IRenderer<Widget> {
+class SVGRenderer implements RenderMime.IRenderer {
+  /**
+   * The mimetypes this renderer accepts.
+   */
   mimetypes = ['image/svg+xml'];
 
-  render(mimetype: string, data: string): Widget {
-    let w = new Widget();
-    w.node.innerHTML = data;
-    let svgElement = w.node.getElementsByTagName('svg')[0];
-    if (!svgElement) {
-      throw new Error('SVGRender: Error: Failed to create <svg> element');
-    }
-    return w;
+  /**
+   * Whether the input can safely sanitized for a given mimetype.
+   */
+  isSanitizable(mimetype: string): boolean {
+    return this.mimetypes.indexOf(mimetype) !== -1;
+  }
+
+  /**
+   * Whether the input is safe without sanitization.
+   */
+  isSafe(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Render the transformed mime bundle.
+   */
+  render(options: RenderMime.IRendererOptions<string>): Widget {
+    return new RenderedSVG(options);
   }
 }
 
@@ -171,17 +185,31 @@ class SVGRenderer implements IRenderer<Widget> {
  * A renderer for PDF data.
  */
 export
-class PDFRenderer implements IRenderer<Widget> {
+class PDFRenderer implements RenderMime.IRenderer {
+  /**
+   * The mimetypes this renderer accepts.
+   */
   mimetypes = ['application/pdf'];
 
-  render(mimetype: string, data: string): Widget {
-    let w = new Widget();
-    let a = document.createElement('a');
-    a.target = '_blank';
-    a.textContent = 'View PDF';
-    a.href = 'data:application/pdf;base64,' + data;
-    w.node.appendChild(a);
-    return w;
+  /**
+   * Whether the input can safely sanitized for a given mimetype.
+   */
+  isSanitizable(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Whether the input is safe without sanitization.
+   */
+  isSafe(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Render the transformed mime bundle.
+   */
+  render(options: RenderMime.IRendererOptions<string>): Widget {
+    return new RenderedPDF(options);
   }
 }
 
@@ -190,11 +218,31 @@ class PDFRenderer implements IRenderer<Widget> {
  * A renderer for LateX data.
  */
 export
-class LatexRenderer implements IRenderer<Widget> {
+class LatexRenderer implements RenderMime.IRenderer  {
+  /**
+   * The mimetypes this renderer accepts.
+   */
   mimetypes = ['text/latex'];
 
-  render(mimetype: string, data: string): Widget {
-    return new LatexWidget(data);
+  /**
+   * Whether the input can safely sanitized for a given mimetype.
+   */
+  isSanitizable(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Whether the input is safe without sanitization.
+   */
+  isSafe(mimetype: string): boolean {
+    return this.mimetypes.indexOf(mimetype) !== -1;
+  }
+
+  /**
+   * Render the mime bundle.
+   */
+  render(options: RenderMime.IRendererOptions<string>): Widget {
+    return new RenderedLatex(options);
   }
 }
 
@@ -203,13 +251,30 @@ class LatexRenderer implements IRenderer<Widget> {
  * A renderer for Jupyter Markdown data.
  */
 export
-class MarkdownRenderer implements IRenderer<Widget> {
+class MarkdownRenderer implements RenderMime.IRenderer {
+  /**
+   * The mimetypes this renderer accepts.
+   */
   mimetypes = ['text/markdown'];
 
-  render(mimetype: string, text: string): Widget {
-    let data = removeMath(text);
-    let html = marked(data['text']);
-    let sanitized = defaultSanitizer.sanitize(replaceMath(html, data['math']));
-    return new HTMLWidget(sanitized);
+  /**
+   * Whether the input can safely sanitized for a given mimetype.
+   */
+  isSanitizable(mimetype: string): boolean {
+    return this.mimetypes.indexOf(mimetype) !== -1;
+  }
+
+  /**
+   * Whether the input is safe without sanitization.
+   */
+  isSafe(mimetype: string): boolean {
+    return false;
+  }
+
+  /**
+   * Render the mime bundle.
+   */
+  render(options: RenderMime.IRendererOptions<string>): Widget {
+    return new RenderedMarkdown(options);
   }
 }

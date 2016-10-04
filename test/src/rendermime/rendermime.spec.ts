@@ -5,7 +5,7 @@ import expect = require('expect.js');
 
 import {
   Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
 
 import {
   LatexRenderer, PDFRenderer, JavascriptRenderer,
@@ -13,8 +13,12 @@ import {
 } from '../../../lib/renderers';
 
 import {
-  IRenderer, MimeMap, RenderMime
+  RenderMime
 } from '../../../lib/rendermime';
+
+import {
+  defaultSanitizer
+} from '../../../lib/sanitizer';
 
 
 const TRANSFORMERS = [
@@ -30,8 +34,8 @@ const TRANSFORMERS = [
 
 
 export
-function defaultRenderMime(): RenderMime<Widget> {
-  let renderers: MimeMap<IRenderer<Widget>> = {};
+function defaultRenderMime(): RenderMime {
+  let renderers: RenderMime.MimeMap<RenderMime.IRenderer> = {};
   let order: string[] = [];
   for (let t of TRANSFORMERS) {
     for (let m of t.mimetypes) {
@@ -39,11 +43,12 @@ function defaultRenderMime(): RenderMime<Widget> {
       order.push(m);
     }
   }
-  return new RenderMime<Widget>(renderers, order);
+  let sanitizer = defaultSanitizer;
+  return new RenderMime({ renderers, order, sanitizer });
 }
 
 
-describe('jupyter-ui', () => {
+describe('rendermime/index', () => {
 
   describe('RenderMime', () => {
 
@@ -60,24 +65,67 @@ describe('jupyter-ui', () => {
 
       it('should render a mimebundle', () => {
         let r = defaultRenderMime();
-        let w = r.render({ 'text/plain': 'foo' });
+        let w = r.render({ bundle: { 'text/plain': 'foo' } });
         expect(w instanceof Widget).to.be(true);
       });
 
       it('should return `undefined` for an unregistered mime type', () => {
         let r = defaultRenderMime();
-        expect(r.render({ 'text/fizz': 'buzz' })).to.be(void 0);
+        let value = r.render({ bundle: { 'text/fizz': 'buzz' } });
+        expect(value).to.be(void 0);
       });
 
       it('should render with the mimetype of highest precidence', () => {
-        let bundle: MimeMap<string> = {
+        let bundle: RenderMime.MimeMap<string> = {
           'text/plain': 'foo',
           'text/html': '<h1>foo</h1>'
-        }
+        };
         let r = defaultRenderMime();
-        let w = r.render(bundle);
+        let w = r.render({ bundle, trusted: true });
         let el = w.node.firstChild as HTMLElement;
         expect(el.localName).to.be('h1');
+      });
+
+      it('should render the mimetype that is safe', () => {
+        let bundle: RenderMime.MimeMap<string> = {
+          'text/plain': 'foo',
+          'text/javascript': 'window.x = 1',
+          'image/png': 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+        };
+        let r = defaultRenderMime();
+        let w = r.render({ bundle, trusted: false });
+        let el = w.node.firstChild as HTMLElement;
+        expect(el.localName).to.be('img');
+      });
+
+      it('should render the mimetype that is sanitizable', () => {
+        let bundle: RenderMime.MimeMap<string> = {
+          'text/plain': 'foo',
+          'text/html': '<h1>foo</h1>'
+        };
+        let r = defaultRenderMime();
+        let w = r.render({ bundle, trusted: false });
+        let el = w.node.firstChild as HTMLElement;
+        expect(el.localName).to.be('h1');
+      });
+
+      it('should sanitize html', () => {
+        let bundle: RenderMime.MimeMap<string> = {
+          'text/html': '<h1>foo <script>window.x=1></scrip></h1>'
+        };
+        let r = defaultRenderMime();
+        let widget = r.render({ bundle });
+        expect(widget.node.innerHTML).to.be('<h1>foo </h1>');
+      });
+
+      it('should sanitize svg', () => {
+        let bundle: RenderMime.MimeMap<string> = {
+          'image/svg+xml': '<svg><script>windox.x=1</script></svg>'
+        };
+        let r = defaultRenderMime();
+        let widget = r.render({ bundle });
+        expect(widget.node.innerHTML.indexOf('svg')).to.not.be(-1);
+        expect(widget.node.innerHTML.indexOf('script')).to.be(-1);
       });
 
     });
@@ -85,10 +133,10 @@ describe('jupyter-ui', () => {
     describe('#preferredMimetype()', () => {
 
       it('should find the preferred mimetype in a bundle', () => {
-        let bundle: MimeMap<string> = {
+        let bundle: RenderMime.MimeMap<string> = {
           'text/plain': 'foo',
           'text/html': '<h1>foo</h1>'
-        }
+        };
         let r = defaultRenderMime();
         expect(r.preferredMimetype(bundle)).to.be('text/html');
       });
@@ -98,6 +146,24 @@ describe('jupyter-ui', () => {
         expect(r.preferredMimetype({ 'text/fizz': 'buzz' })).to.be(void 0);
       });
 
+      it('should select the mimetype that is safe', () => {
+        let bundle: RenderMime.MimeMap<string> = {
+          'text/plain': 'foo',
+          'text/javascript': 'window.x = 1',
+          'image/png': 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+        };
+        let r = defaultRenderMime();
+        expect(r.preferredMimetype(bundle)).to.be('image/png');
+      });
+
+      it('should render the mimetype that is sanitizable', () => {
+        let bundle: RenderMime.MimeMap<string> = {
+          'text/plain': 'foo',
+          'text/html': '<h1>foo</h1>'
+        };
+        let r = defaultRenderMime();
+        expect(r.preferredMimetype(bundle)).to.be('text/html');
+      });
     });
 
     describe('#clone()', () => {
@@ -106,27 +172,9 @@ describe('jupyter-ui', () => {
         let r = defaultRenderMime();
         let c = r.clone();
         expect(c.order).to.eql(r.order);
-        expect(c.getRenderer('text/html')).to.be(r.getRenderer('text/html'));
         let t = new TextRenderer();
         c.addRenderer('text/foo', t);
-        expect(c.getRenderer('text/foo')).to.be(t);
-        expect(r.getRenderer('text/foo')).to.be(void 0);
         expect(r).to.not.be(c);
-      });
-
-    });
-
-    describe('#getRenderer()', () => {
-
-      it('should get a renderer by mimetype', () => {
-        let r = defaultRenderMime();
-        let t = r.getRenderer('text/latex');
-        expect(t.mimetypes.indexOf('text/latex')).to.not.be(-1);
-      });
-
-      it('should return `undefined` for an unregistered type', () => {
-        let r = defaultRenderMime();
-        expect(r.getRenderer('text/foo')).to.be(void 0);
       });
 
     });
@@ -137,7 +185,6 @@ describe('jupyter-ui', () => {
         let r = defaultRenderMime();
         let t = new TextRenderer();
         r.addRenderer('text/foo', t);
-        expect(r.getRenderer('text/foo')).to.be(t);
         let index = r.order.indexOf('text/foo');
         expect(index).to.be(0);
       });
@@ -159,7 +206,10 @@ describe('jupyter-ui', () => {
       it('should remove a renderer by mimetype', () => {
         let r = defaultRenderMime();
         r.removeRenderer('text/html');
-        expect(r.getRenderer('text/html')).to.be(void 0);
+        let bundle: RenderMime.MimeMap<string> = {
+          'text/html': '<h1>foo</h1>'
+        };
+        expect(r.preferredMimetype(bundle)).to.be(void 0);
       });
 
       it('should be a no-op if the mimetype is not registered', () => {

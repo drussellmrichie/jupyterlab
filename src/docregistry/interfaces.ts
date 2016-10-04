@@ -7,19 +7,19 @@ import {
 
 import {
   IDisposable
-} from 'phosphor-disposable';
-
-import {
-  IChangedArgs
-} from 'phosphor-properties';
+} from 'phosphor/lib/core/disposable';
 
 import {
   ISignal
-} from 'phosphor-signaling';
+} from 'phosphor/lib/core/signaling';
 
 import {
   Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
+
+import {
+  IChangedArgs
+} from '../common/interfaces';
 
 
 /**
@@ -98,7 +98,8 @@ interface IDocumentModel extends IDisposable {
 /**
  * The document context object.
  */
-export interface IDocumentContext<T extends IDocumentModel> extends IDisposable {
+export
+interface IDocumentContext<T extends IDocumentModel> extends IDisposable {
   /**
    * A signal emitted when the kernel changes.
    */
@@ -120,12 +121,9 @@ export interface IDocumentContext<T extends IDocumentModel> extends IDisposable 
   populated: ISignal<IDocumentContext<T>, void>;
 
   /**
-   * The unique id of the context.
-   *
-   * #### Notes
-   * This is a read-only property.
+   * A signal emitted when the context is disposed.
    */
-  id: string;
+  disposed: ISignal<IDocumentContext<T>, void>;
 
   /**
    * Get the model associated with the document.
@@ -191,9 +189,9 @@ export interface IDocumentContext<T extends IDocumentModel> extends IDisposable 
   save(): Promise<void>;
 
   /**
-   * Save the document to a different path.
+   * Save the document to a different path chosen by the user.
    */
-  saveAs(path: string): Promise<void>;
+  saveAs(): Promise<void>;
 
   /**
    * Revert the document contents to disk contents.
@@ -201,9 +199,49 @@ export interface IDocumentContext<T extends IDocumentModel> extends IDisposable 
   revert(): Promise<void>;
 
   /**
+   * Create a checkpoint for the file.
+   *
+   * @returns A promise which resolves with the new checkpoint model when the
+   *   checkpoint is created.
+   */
+  createCheckpoint(): Promise<IContents.ICheckpointModel>;
+
+  /**
+   * Delete a checkpoint for the file.
+   *
+   * @param checkpointID - The id of the checkpoint to delete.
+   *
+   * @returns A promise which resolves when the checkpoint is deleted.
+   */
+  deleteCheckpoint(checkpointID: string): Promise<void>;
+
+  /**
+   * Restore the file to a known checkpoint state.
+   *
+   * @param checkpointID - The optional id of the checkpoint to restore,
+   *   defaults to the most recent checkpoint.
+   *
+   * @returns A promise which resolves when the checkpoint is restored.
+   */
+  restoreCheckpoint(checkpointID?: string): Promise<void>;
+
+  /**
+   * List available checkpoints for the file.
+   *
+   * @returns A promise which resolves with a list of checkpoint models for
+   *    the file.
+   */
+  listCheckpoints(): Promise<IContents.ICheckpointModel[]>;
+
+  /**
    * Get the list of running sessions.
    */
   listSessions(): Promise<ISession.IModel[]>;
+
+  /**
+   * Resolve a url to a correct server path.
+   */
+  resolveUrl(url: string): string;
 
   /**
    * Add a sibling widget to the document manager.
@@ -251,6 +289,7 @@ interface IWidgetFactoryOptions {
    * Use "*" to denote all files. Specific file extensions must be preceded
    * with '.', like '.png', '.txt', etc. Entries in this attribute must also
    * be included in the fileExtensions attribute.
+   * The default is an empty array.
    *
    * **See also:** [[fileExtensions]].
    */
@@ -258,11 +297,15 @@ interface IWidgetFactoryOptions {
 
   /**
    * Whether the widgets prefer having a kernel started.
+   *
+   * The default is `false`.
    */
   preferKernel?: boolean;
 
   /**
    * Whether the widgets can start a kernel when opened.
+   *
+   * The default is `false`.
    */
   canStartKernel?: boolean;
 }
@@ -296,7 +339,7 @@ interface IWidgetExtension<T extends Widget, U extends IDocumentModel> {
   /**
    * Create a new extension for a given widget.
    */
-   createNew(widget: T, context: IDocumentContext<U>): IDisposable;
+  createNew(widget: T, context: IDocumentContext<U>): IDisposable;
 }
 
 
@@ -304,7 +347,7 @@ interface IWidgetExtension<T extends Widget, U extends IDocumentModel> {
  * The interface for a model factory.
  */
 export
-interface IModelFactory extends IDisposable {
+interface IModelFactory<T extends IDocumentModel> extends IDisposable {
   /**
    * The name of the model.
    *
@@ -335,7 +378,7 @@ interface IModelFactory extends IDisposable {
    *
    * @returns A new document model.
    */
-  createNew(languagePreference?: string): IDocumentModel;
+  createNew(languagePreference?: string): T;
 
   /**
    * Get the preferred kernel language given an extension.

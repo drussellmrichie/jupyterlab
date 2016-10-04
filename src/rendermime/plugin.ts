@@ -2,8 +2,8 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  RenderMime, MimeMap, IRenderer
-} from './index';
+  JupyterLabPlugin
+} from '../application';
 
 import {
   HTMLRenderer, LatexRenderer, ImageRenderer, TextRenderer,
@@ -11,18 +11,23 @@ import {
 } from '../renderers';
 
 import {
-  Widget
-} from 'phosphor-widget';
+  defaultSanitizer
+} from '../sanitizer';
+
+import {
+  IRenderMime, RenderMime
+} from './';
 
 
 /**
  * The default rendermime provider.
  */
 export
-const renderMimeProvider = {
+const renderMimeProvider: JupyterLabPlugin<IRenderMime> = {
   id: 'jupyter.services.rendermime',
-  provides: RenderMime,
-  resolve: () => {
+  provides: IRenderMime,
+  activate: (): IRenderMime => {
+    let sanitizer = defaultSanitizer;
     const transformers = [
       new JavascriptRenderer(),
       new MarkdownRenderer(),
@@ -32,7 +37,7 @@ const renderMimeProvider = {
       new LatexRenderer(),
       new TextRenderer()
     ];
-    let renderers: MimeMap<IRenderer<Widget>> = {};
+    let renderers: RenderMime.MimeMap<RenderMime.IRenderer> = {};
     let order: string[] = [];
     for (let t of transformers) {
       for (let m of t.mimetypes) {
@@ -40,6 +45,6 @@ const renderMimeProvider = {
         order.push(m);
       }
     }
-    return new RenderMime<Widget>(renderers, order);
+    return new RenderMime({ renderers, order, sanitizer });
   }
 };

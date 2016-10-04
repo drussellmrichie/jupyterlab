@@ -2,8 +2,11 @@
 | Copyright (c) Jupyter Development Team.
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
-.jp-ImageConsole {
+
+
+.jp-ImageCodeConsole {
   background-image: url(images/console.svg);
+  margin-left: 12px;
 }
 
 
@@ -27,6 +30,11 @@
 }
 
 
+.jp-QuestionMark {
+  background-image: url(images/questionmark.svg);
+}
+
+
 .jp-JupyterIcon {
   background-image: url(images/jupyter.svg);
   background-size: 16px;
@@ -34,4 +42,29 @@
   margin-left: 10px;
   margin-right: 0px;
   padding-right: 0px;
+}
+
+
+.jp-Landing-tour {
+  background-image: url(images/tour.svg);
+}
+
+
+.jp-Landing-folder {
+  background-image: url(images/landingfolder.svg);
+}
+
+
+.jp-MainAreaLandscapeIcon {
+  background-repeat: no-repeat;
+  margin-right: 2px;
+  width: 22px;
+}
+
+
+.jp-MainAreaPortraitIcon {
+  background-position: 0 1px;
+  background-repeat: no-repeat;
+  margin-right: 0;
+  width: 20px;
 }

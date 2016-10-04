@@ -6,12 +6,24 @@ import {
 } from 'jupyter-js-services';
 
 import {
-  Menu, MenuItem
-} from 'phosphor-menus';
+  DisposableSet
+} from 'phosphor/lib/core/disposable';
+
+import {
+  CommandRegistry
+} from 'phosphor/lib/ui/commandregistry';
+
+import {
+  Keymap
+} from 'phosphor/lib/ui/keymap';
+
+import {
+  Menu
+} from 'phosphor/lib/ui/menu';
 
 import {
   Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
 
 import {
   showDialog
@@ -22,16 +34,16 @@ import {
 } from '../docmanager';
 
 import {
-  IFileType
-} from '../docregistry';
+  IWidgetOpener
+} from './browser';
+
+import {
+  createFromDialog
+} from './dialogs';
 
 import {
   FileBrowserModel
 } from './model';
-
-import {
-  IWidgetOpener
-} from './browser';
 
 import * as utils
   from './utils';
@@ -108,6 +120,8 @@ class FileButtons extends Widget {
     node.appendChild(this._buttons.upload);
     node.appendChild(this._buttons.refresh);
 
+    this._commands = options.commands;
+    this._keymap = options.keymap;
     this._manager = options.manager;
     this._opener = options.opener;
   }
@@ -116,10 +130,12 @@ class FileButtons extends Widget {
    * Dispose of the resources held by the widget.
    */
   dispose(): void {
-    this._model = null;
     this._buttons = null;
+    this._commands = null;
     this._input = null;
+    this._keymap = null;
     this._manager = null;
+    this._model = null;
     this._opener = null;
     super.dispose();
   }
@@ -142,27 +158,42 @@ class FileButtons extends Widget {
   }
 
   /**
+   * Create a file from a creator.
+   */
+  createFrom(creatorName: string): Promise<Widget> {
+    return createFromDialog(this.model, this.manager, creatorName).then(widget => {
+      return widget ? this._open(widget) : null;
+    });
+  }
+
+  /**
    * Open a file by path.
    */
-  open(path: string, widgetName='default', kernel?: IKernel.IModel): void {
-    let widget = this._manager.open(path, widgetName, kernel);
-    let opener = this._opener;
-    opener.open(widget);
-    let context = this._manager.contextForWidget(widget);
-    context.populated.connect(() => this.model.refresh() );
-    context.kernelChanged.connect(() => this.model.refresh() );
+  open(path: string, widgetName='default', kernel?: IKernel.IModel): Widget {
+    let widget = this._manager.findWidget(path, widgetName);
+    if (!widget) {
+      widget = this._manager.open(path, widgetName, kernel);
+    }
+    return this._open(widget);
   }
 
   /**
    * Create a new file by path.
    */
-  createNew(path: string, widgetName='default', kernel?: IKernel.IModel): void {
+  createNew(path: string, widgetName='default', kernel?: IKernel.IModel): Widget {
     let widget = this._manager.createNew(path, widgetName, kernel);
-    let opener = this._opener;
-    opener.open(widget);
+    return this._open(widget);
+  }
+
+  /**
+   * Open a widget and attach listeners.
+   */
+  private _open(widget: Widget): Widget {
+    this._opener.open(widget);
     let context = this._manager.contextForWidget(widget);
     context.populated.connect(() => this.model.refresh() );
     context.kernelChanged.connect(() => this.model.refresh() );
+    return widget;
   }
 
   /**
@@ -181,16 +212,18 @@ class FileButtons extends Widget {
     }
 
     // Create a new dropdown menu and snap the button geometry.
-    let dropdown = Private.createDropdownMenu(this);
+    let commands = this._commands;
+    let keymap = this._keymap;
+    let dropdown = Private.createDropdownMenu(this, commands, keymap);
     let rect = button.getBoundingClientRect();
 
     // Mark the button as active.
     button.classList.add(ACTIVE_CLASS);
 
-    // Setup the `closed` signal handler. The menu is disposed on an
+    // Setup the `aboutToClose` signal handler. The menu is disposed on an
     // animation frame to allow a mouse press event which closed the
     // menu to run its course. This keeps the button from re-opening.
-    dropdown.closed.connect(() => {
+    dropdown.aboutToClose.connect(() => {
       requestAnimationFrame(() => { dropdown.dispose(); });
     });
 
@@ -201,7 +234,7 @@ class FileButtons extends Widget {
     });
 
     // Popup the menu aligned with the bottom of the create button.
-    dropdown.popup(rect.left, rect.bottom, false, false);
+    dropdown.open(rect.left, rect.bottom, { forceX: false, forceY: false });
   };
 
 
@@ -235,10 +268,12 @@ class FileButtons extends Widget {
     Private.uploadFiles(this, files as File[]);
   };
 
-  private _model: FileBrowserModel;
   private _buttons = Private.createButtons();
+  private _commands: CommandRegistry = null;
   private _input = Private.createUploadInput();
+  private _keymap: Keymap = null;
   private _manager: DocumentManager = null;
+  private _model: FileBrowserModel;
   private _opener: IWidgetOpener = null;
 }
 
@@ -254,6 +289,16 @@ namespace FileButtons {
    */
   export
   interface IOptions {
+    /**
+     * The command registry for use with the file buttons.
+     */
+    commands: CommandRegistry;
+
+    /**
+     * The keymap for use with the file buttons.
+     */
+    keymap: Keymap;
+
     /**
      * A file browser model instance.
      */
@@ -276,6 +321,16 @@ namespace FileButtons {
  * The namespace for the `FileButtons` private data.
  */
 namespace Private {
+  /**
+   * The ID counter prefix for new commands.
+   *
+   * #### Notes
+   * Even though the commands are disposed when the dropdown menu is disposed,
+   * in order to guarantee there are no race conditions with other `FileButtons`
+   * instances, each set of commands is prefixed.
+   */
+  let id = 0;
+
   /**
    * An object which holds the button nodes for a file buttons widget.
    */
@@ -350,18 +405,6 @@ namespace Private {
   }
 
   /**
-   * Create a new source file.
-   */
-  export
-  function createNewFile(widget: FileButtons): void {
-    widget.model.newUntitled({ type: 'file' }).then(contents => {
-      return widget.open(contents.path);
-    }).catch(error => {
-      utils.showErrorMessage(widget, 'New File Error', error);
-    });
-  }
-
-  /**
    * Create a new folder.
    */
   export
@@ -374,52 +417,38 @@ namespace Private {
   }
 
   /**
-   * Create a new item using a file creator.
-   */
-  function createNewItem(widget: FileButtons, fileType: IFileType, widgetName: string, kernelName?: string): void {
-    let kernel: IKernel.IModel;
-    if (kernelName) {
-      kernel = { name: kernelName };
-    }
-    widget.model.newUntitled(
-      { type: fileType.fileType, ext: fileType.extension })
-    .then(contents => {
-      widget.createNew(contents.path, widgetName, kernel);
-    });
-  }
-
-  /**
    * Create a new dropdown menu for the create new button.
    */
   export
-  function createDropdownMenu(widget: FileButtons): Menu {
-    let items = [
-      new MenuItem({
-        text: 'Text File',
-        handler: () => { createNewFile(widget); }
-      }),
-      new MenuItem({
-        text: 'Folder',
-        handler: () => { createNewFolder(widget); }
-      })
-    ];
+  function createDropdownMenu(widget: FileButtons, commands: CommandRegistry, keymap: Keymap): Menu {
+    let menu = new Menu({ commands, keymap });
+    let prefix = `file-buttons-${++id}`;
+    let disposables = new DisposableSet();
     let registry = widget.manager.registry;
     let creators = registry.listCreators();
-    if (creators) {
-      items.push(new MenuItem({ type: MenuItem.Separator }));
-    }
+    let command: string;
+
+    // Remove all the commands associated with this menu upon disposal.
+    menu.disposed.connect(() => disposables.dispose());
+
+    command = `${prefix}:new-text-folder`;
+    disposables.add(commands.addCommand(command, {
+      execute: () => { createNewFolder(widget); },
+      label: 'Folder'
+    }));
+    menu.addItem({ command });
+
     for (let creator of creators) {
-      let fileType = registry.getFileType(creator.fileType);
-      let item = new MenuItem({
-        text: creator.name,
-        handler: () => {
-          let widgetName = creator.widgetName || 'default';
-          let kernelName = creator.kernelName;
-          createNewItem(widget, fileType, widgetName, kernelName); }
-      });
-      items.push(item);
+      command = `${prefix}:new-${creator.name}`;
+      disposables.add(commands.addCommand(command, {
+        execute: () => {
+          widget.createFrom(creator.name);
+        },
+        label: creator.name
+      }));
+      menu.addItem({ command });
     }
-    return new Menu(items);
+    return menu;
   }
 
   /**

@@ -2,12 +2,12 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IKernel
+  IKernel, KernelMessage
 } from 'jupyter-js-services';
 
 import {
   MimeData as IClipboard
-} from 'phosphor-dragdrop';
+} from 'phosphor/lib/core/mimedata';
 
 import {
   ICellModel, CodeCellModel,
@@ -82,6 +82,7 @@ namespace NotebookActions {
     // Make the changes while preserving history.
     nbModel.cells.replace(index, 1, [clone0, clone1]);
     widget.activeCellIndex++;
+    widget.scrollToActiveCell();
   }
 
   /**
@@ -106,38 +107,38 @@ namespace NotebookActions {
     let toDelete: ICellModel[] = [];
     let model = widget.model;
     let cells = model.cells;
-    let index = widget.activeCellIndex;
     let primary = widget.activeCell;
+    let index = widget.activeCellIndex;
     let child: BaseCellWidget;
 
-    // Get the other cells to merge.
+    // Get the cells to merge.
     for (let i = 0; i < widget.childCount(); i++) {
-      if (i === index) {
-        continue;
-      }
       child = widget.childAt(i);
       if (widget.isSelected(child)) {
         toMerge.push(child.model.source);
-        toDelete.push(child.model);
+        if (i !== index) {
+          toDelete.push(child.model);
+        }
       }
     }
 
-    // Make sure there are cells to merge and select cells.
-    if (!toMerge.length) {
-      // Choose the cell after the active cell.
-      child = widget.childAt(index + 1);
-      if (!child) {
+    // Check for only a single cell selected.
+    if (toMerge.length === 1) {
+      // Bail if it is the last cell.
+      if (index === cells.length - 1) {
         return;
       }
-      toMerge.push(child.model.source);
-      toDelete.push(child.model);
+      // Otherwise merge with the next cell.
+      let cellModel = cells.get(index + 1);
+      toMerge.push(cellModel.source);
+      toDelete.push(cellModel);
     }
+
     Private.deselectCells(widget);
 
     // Create a new cell for the source to preserve history.
     let newModel = Private.cloneCell(model, primary.model);
-    newModel.source += '\n\n';
-    newModel.source += toMerge.join('\n\n');
+    newModel.source = toMerge.join('\n\n');
     if (newModel instanceof CodeCellModel) {
       newModel.outputs.clear();
     }
@@ -164,7 +165,7 @@ namespace NotebookActions {
    * @param widget - The target notebook widget.
    *
    * #### Notes
-   * The cell before the first selected cell will be activated.
+   * The cell after the last selected cell will be activated.
    * It will add a code cell if all cells are deleted.
    * This action can be undone.
    */
@@ -183,9 +184,7 @@ namespace NotebookActions {
     for (let i = 0; i < widget.childCount(); i++) {
       let child = widget.childAt(i);
       if (widget.isSelected(child)) {
-        if (index === -1) {
-          index = i - 1;
-        }
+        index = i;
         toDelete.push(cells.get(i));
       }
     }
@@ -195,18 +194,14 @@ namespace NotebookActions {
     for (let cell of toDelete) {
       cells.remove(cell);
     }
-
-    // Add a new code cell if all cells were deleted.
-    if (!model.cells.length) {
-      let cell = model.factory.createCodeCell();
-      model.cells.add(cell);
-    }
+    // The model will add a new code cell if there are no
+    // remaining cells.
     model.cells.endCompoundOperation();
 
-    // Activate the previous cell.
-    if (index === -1) {
-      index = 0;
-    }
+    // Select the cell *after* the last selected.
+    // Note: The activeCellIndex is clamped to the available cells,
+    // so if the last cell is deleted the previous cell will be activated.
+    index -= toDelete.length - 1;
     widget.activeCellIndex = index;
   }
 
@@ -251,6 +246,60 @@ namespace NotebookActions {
     widget.model.cells.insert(widget.activeCellIndex + 1, cell);
     widget.activeCellIndex++;
     Private.deselectCells(widget);
+  }
+
+  /**
+   * Move the selected cell(s) down.
+   *
+   * @param widget = The target notebook widget.
+   */
+  export
+  function moveDown(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let cells = widget.model.cells;
+    cells.beginCompoundOperation();
+    for (let i = cells.length - 2; i > -1; i--) {
+      if (widget.isSelected(widget.childAt(i))) {
+        if (!widget.isSelected(widget.childAt(i + 1))) {
+          cells.move(i, i + 1);
+          if (widget.activeCellIndex === i) {
+            widget.activeCellIndex++;
+          }
+          widget.select(widget.childAt(i + 1));
+          widget.deselect(widget.childAt(i));
+        }
+      }
+    }
+    cells.endCompoundOperation();
+  }
+
+  /**
+   * Move the selected cell(s) up.
+   *
+   * @param widget - The target notebook widget.
+   */
+  export
+  function moveUp(widget: Notebook): void {
+    if (!widget.model || !widget.activeCell) {
+      return;
+    }
+    let cells = widget.model.cells;
+    cells.beginCompoundOperation();
+    for (let i = 1; i < cells.length; i++) {
+      if (widget.isSelected(widget.childAt(i))) {
+        if (!widget.isSelected(widget.childAt(i - 1))) {
+          cells.move(i, i - 1);
+          if (widget.activeCellIndex === i) {
+            widget.activeCellIndex--;
+          }
+          widget.select(widget.childAt(i - 1));
+          widget.deselect(widget.childAt(i));
+        }
+      }
+    }
+    cells.endCompoundOperation();
   }
 
   /**
@@ -337,9 +386,11 @@ namespace NotebookActions {
 
     let promises: Promise<boolean>[] = [];
     for (let child of selected) {
-      promises.push(Private.runCell(child, kernel));
+      promises.push(Private.runCell(widget, child, kernel));
     }
     return Promise.all(promises).then(results => {
+      // Post an update request.
+      widget.update();
       for (let result of results) {
         if (!result) {
           return false;
@@ -369,16 +420,19 @@ namespace NotebookActions {
     if (!widget.model || !widget.activeCell) {
       return Promise.resolve(false);
     }
-    return run(widget, kernel).then(result => {
-      let model = widget.model;
-      if (widget.activeCellIndex === widget.childCount() - 1) {
-        let cell = model.factory.createCodeCell();
-        model.cells.add(cell);
-        widget.mode = 'edit';
-      }
+    let promise = run(widget, kernel);
+    let model = widget.model;
+    if (widget.activeCellIndex === widget.childCount() - 1) {
+      let cell = model.factory.createCodeCell();
+      model.cells.add(cell);
       widget.activeCellIndex++;
-      return result;
-    });
+      widget.mode = 'edit';
+    } else {
+      widget.activeCellIndex++;
+    }
+    widget.scrollToActiveCell();
+
+    return promise;
   }
 
   /**
@@ -400,14 +454,14 @@ namespace NotebookActions {
     if (!widget.model || !widget.activeCell) {
       return Promise.resolve(false);
     }
-    return run(widget, kernel).then(result => {
-      let model = widget.model;
-      let cell = model.factory.createCodeCell();
-      model.cells.insert(widget.activeCellIndex + 1, cell);
-      widget.activeCellIndex++;
-      widget.mode = 'edit';
-      return result;
-    });
+    let promise = run(widget, kernel);
+    let model = widget.model;
+    let cell = model.factory.createCodeCell();
+    model.cells.insert(widget.activeCellIndex + 1, cell);
+    widget.activeCellIndex++;
+    widget.scrollToActiveCell();
+    widget.mode = 'edit';
+    return promise;
   }
 
   /**
@@ -452,6 +506,7 @@ namespace NotebookActions {
       return;
     }
     widget.activeCellIndex -= 1;
+    widget.scrollToActiveCell();
     Private.deselectCells(widget);
   }
 
@@ -474,6 +529,7 @@ namespace NotebookActions {
       return;
     }
     widget.activeCellIndex += 1;
+    widget.scrollToActiveCell();
     Private.deselectCells(widget);
   }
 
@@ -500,14 +556,17 @@ namespace NotebookActions {
     let prev = widget.childAt(widget.activeCellIndex - 1);
     if (widget.isSelected(prev)) {
       widget.deselect(current);
-      let prevPrev = widget.childAt(widget.activeCellIndex - 2);
-      if (!widget.isSelected(prevPrev)) {
-        widget.deselect(prev);
+      if (widget.activeCellIndex > 1) {
+        let prevPrev = widget.childAt(widget.activeCellIndex - 2);
+        if (!widget.isSelected(prevPrev)) {
+          widget.deselect(prev);
+        }
       }
     } else {
       widget.select(current);
     }
     widget.activeCellIndex -= 1;
+    widget.scrollToActiveCell();
   }
 
   /**
@@ -533,14 +592,17 @@ namespace NotebookActions {
     let next = widget.childAt(widget.activeCellIndex + 1);
     if (widget.isSelected(next)) {
       widget.deselect(current);
-      let nextNext = widget.childAt(widget.activeCellIndex + 2);
-      if (!widget.isSelected(nextNext)) {
-        widget.deselect(next);
+      if (widget.activeCellIndex < widget.model.cells.length - 2) {
+        let nextNext = widget.childAt(widget.activeCellIndex + 2);
+        if (!widget.isSelected(nextNext)) {
+          widget.deselect(next);
+        }
       }
     } else {
       widget.select(current);
     }
     widget.activeCellIndex += 1;
+    widget.scrollToActiveCell();
   }
 
   /**
@@ -623,6 +685,8 @@ namespace NotebookActions {
    * @param clipboard - The clipboard object.
    *
    * #### Notes
+   * The cells are pasted below the active cell.
+   * The last pasted cell becomes the active cell.
    * This is a no-op if there is no cell data on the clipboard.
    * This action can be undone.
    */
@@ -636,24 +700,25 @@ namespace NotebookActions {
     }
     let values = clipboard.getData(JUPYTER_CELL_MIME) as nbformat.IBaseCell[];
     let model = widget.model;
-    let cells: ICellModel[] = [];
+    let newCells: ICellModel[] = [];
     widget.mode = 'command';
 
     for (let value of values) {
       switch (value.cell_type) {
       case 'code':
-        cells.push(model.factory.createCodeCell(value));
+        newCells.push(model.factory.createCodeCell(value));
         break;
       case 'markdown':
-        cells.push(model.factory.createMarkdownCell(value));
+        newCells.push(model.factory.createMarkdownCell(value));
         break;
       default:
-        cells.push(model.factory.createRawCell(value));
+        newCells.push(model.factory.createRawCell(value));
         break;
       }
     }
     let index = widget.activeCellIndex;
-    widget.model.cells.replace(index, 0, cells);
+    widget.model.cells.replace(index + 1, 0, newCells);
+    widget.activeCellIndex += newCells.length;
     Private.deselectCells(widget);
   }
 
@@ -672,6 +737,7 @@ namespace NotebookActions {
     }
     widget.mode = 'command';
     widget.model.cells.undo();
+    Private.deselectCells(widget);
   }
 
   /**
@@ -689,6 +755,7 @@ namespace NotebookActions {
     }
     widget.mode = 'command';
     widget.model.cells.redo();
+    Private.deselectCells(widget);
   }
 
   /**
@@ -827,6 +894,8 @@ namespace Private {
       let child = widget.childAt(i);
       widget.deselect(child);
     }
+    // Make sure we have a valid active cell.
+    widget.activeCellIndex = widget.activeCellIndex;
   }
 
   /**
@@ -848,23 +917,67 @@ namespace Private {
    * Run a cell.
    */
   export
-  function runCell(widget: BaseCellWidget, kernel?: IKernel): Promise<boolean> {
-    switch (widget.model.type) {
+  function runCell(parent: Notebook, child: BaseCellWidget, kernel?: IKernel): Promise<boolean> {
+
+    switch (child.model.type) {
     case 'markdown':
-      (widget as MarkdownCellWidget).rendered = true;
+      (child as MarkdownCellWidget).rendered = true;
       break;
     case 'code':
       if (kernel) {
-        return (widget as CodeCellWidget).execute(kernel).then(reply => {
+        return (child as CodeCellWidget).execute(kernel).then(reply => {
+          if (reply && reply.content.status === 'ok') {
+            let content = reply.content as KernelMessage.IExecuteOkReply;
+            if (content.payload && content.payload.length) {
+              handlePayload(content, parent, child);
+            }
+          }
           return reply ? reply.content.status === 'ok' : true;
         });
       }
-      (widget.model as CodeCellModel).executionCount = null;
+      (child.model as CodeCellModel).executionCount = null;
       break;
     default:
       break;
     }
     return Promise.resolve(true);
+  }
+
+  /**
+   * Handle payloads from an execute reply.
+   *
+   * #### Notes
+   * Payloads are deprecated and there are no official interfaces for them in
+   * the kernel type definitions.
+   * See [Payloads (DEPRECATED)](http://jupyter-client.readthedocs.io/en/latest/messaging.html#payloads-deprecated).
+   */
+  function handlePayload(content: KernelMessage.IExecuteOkReply, parent: Notebook, child: BaseCellWidget) {
+    let setNextInput = content.payload.filter(i => {
+      return (i as any).source === 'set_next_input';
+    })[0];
+
+    if (!setNextInput) {
+      return;
+    }
+
+    let text = (setNextInput as any).text;
+    let replace = (setNextInput as any).replace;
+
+    if (replace) {
+      child.model.source = text;
+      return;
+    }
+
+    // Create a new code cell and add as the next cell.
+    let cell = parent.model.factory.createCodeCell();
+    cell.source = text;
+    let cells = parent.model.cells;
+    let i = cells.indexOf(child.model);
+    if (i === -1) {
+      cells.add(cell);
+    } else {
+      cells.insert(i + 1, cell);
+    }
   }
 
   /**

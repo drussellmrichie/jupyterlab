@@ -6,20 +6,21 @@ import {
 } from 'jupyter-js-services';
 
 import {
+  deepEqual
+} from 'phosphor/lib/algorithm/json';
+
+import {
   IDisposable
-} from 'phosphor-disposable';
+} from 'phosphor/lib/core/disposable';
+
+import {
+  clearSignalData, defineSignal, ISignal
+} from 'phosphor/lib/core/signaling';
 
 import {
   IChangedArgs
-} from 'phosphor-properties';
+} from '../common/interfaces';
 
-import {
-  ISignal, Signal, clearSignalData
-} from 'phosphor-signaling';
-
-import {
-  deepEqual
-} from '../notebook/common/json';
 
 
 /**
@@ -44,23 +45,17 @@ class FileBrowserModel implements IDisposable {
   /**
    * A signal emitted when the path changes.
    */
-  get pathChanged(): ISignal<FileBrowserModel, IChangedArgs<string>> {
-    return Private.pathChangedSignal.bind(this);
-  }
+  pathChanged: ISignal<FileBrowserModel, IChangedArgs<string>>;
 
   /**
    * Get the refreshed signal.
    */
-  get refreshed(): ISignal<FileBrowserModel, void> {
-    return Private.refreshedSignal.bind(this);
-  }
+  refreshed: ISignal<FileBrowserModel, void>;
 
   /**
    * Get the file path changed signal.
    */
-  get fileChanged(): ISignal<FileBrowserModel, IChangedArgs<string>> {
-    return Private.fileChangedSignal.bind(this);
-  }
+  fileChanged: ISignal<FileBrowserModel, IChangedArgs<string>>;
 
   /**
    * Get the current path.
@@ -128,7 +123,7 @@ class FileBrowserModel implements IDisposable {
       return Promise.resolve(void 0);
     }
     let oldValue = this.path;
-    let options = { content: true };
+    let options: IContents.IFetchOptions = { content: true };
     this._pendingPath = newValue;
     if (newValue === '.') {
       newValue = this.path;
@@ -213,19 +208,13 @@ class FileBrowserModel implements IDisposable {
    * Download a file.
    *
    * @param - path - The path of the file to be downloaded.
-   *
-   * @returns - A promise which resolves to the file contents.
    */
-  download(path: string): Promise<IContents.IModel> {
-    let normalizePath = Private.normalizePath;
-    path = normalizePath(this._model.path, path);
-    return this._manager.contents.get(path, {}).then(contents => {
-      let element = document.createElement('a');
-      element.setAttribute('href', 'data:text/text;charset=utf-8,' +      encodeURI(contents.content));
-      element.setAttribute('download', contents.name);
-      element.click();
-      return contents;
-    });
+  download(path: string): void {
+    let url = this._manager.contents.getDownloadUrl(path);
+    let element = document.createElement('a');
+    element.setAttribute('href', url);
+    element.setAttribute('download', '');
+    element.click();
   }
 
   /**
@@ -397,6 +386,11 @@ class FileBrowserModel implements IDisposable {
 }
 
 
+// Define the signals for the `FileBrowserModel` class.
+defineSignal(FileBrowserModel.prototype, 'pathChanged');
+defineSignal(FileBrowserModel.prototype, 'refreshed');
+defineSignal(FileBrowserModel.prototype, 'fileChanged');
+
 /**
  * The namespace for the `FileBrowserModel` class statics.
  */
@@ -419,24 +413,6 @@ namespace FileBrowserModel {
  * The namespace for the file browser model private data.
  */
 namespace Private {
-  /**
-   * A signal emitted when a model refresh occurs.
-   */
-  export
-  const refreshedSignal = new Signal<FileBrowserModel, void>();
-
-  /**
-   * A signal emitted when the a file changes path.
-   */
-  export
-  const fileChangedSignal = new Signal<FileBrowserModel, IChangedArgs<string>>();
-
-  /**
-   * A signal emitted when the path changes.
-   */
-  export
-  const pathChangedSignal = new Signal<FileBrowserModel, IChangedArgs<string>> ();
-
   /**
    * Parse the content of a `FileReader`.
    *

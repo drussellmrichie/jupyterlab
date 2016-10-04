@@ -6,11 +6,15 @@ import {
 } from 'jupyterlab/lib/console';
 
 import {
-  startNewSession, ISession
+  CodeMirrorConsoleRenderer
+} from 'jupyterlab/lib/console/codemirror/widget';
+
+import {
+  startNewSession, findSessionByPath, connectToSession, ISession
 } from 'jupyter-js-services';
 
 import {
-  RenderMime, IRenderer, MimeMap
+  RenderMime
 } from 'jupyterlab/lib/rendermime';
 
 import {
@@ -19,46 +23,65 @@ import {
 } from 'jupyterlab/lib/renderers';
 
 import {
-  CommandPalette, StandardPaletteModel, IStandardPaletteItemOptions
-} from 'phosphor-commandpalette';
+  defaultSanitizer
+} from 'jupyterlab/lib/sanitizer';
 
 import {
-  KeymapManager
-} from 'phosphor-keymap';
+  CommandRegistry
+} from 'phosphor/lib/ui/commandregistry';
+
+import {
+  CommandPalette
+} from 'phosphor/lib/ui/commandpalette';
+
+import {
+  Keymap
+} from 'phosphor/lib/ui/keymap';
 
 import {
   SplitPanel
-} from 'phosphor-splitpanel';
+} from 'phosphor/lib/ui/splitpanel';
 
 import {
   Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
 
-import 'jupyterlab/lib/console/base.css';
-import 'jupyterlab/lib/default-theme/completion.css';
-import 'jupyterlab/lib/default-theme/console.css';
-import 'jupyterlab/lib/dialog/index.css';
-import 'jupyterlab/lib/dialog/theme.css';
-import 'jupyterlab/lib/iframe/index.css';
-import 'jupyterlab/lib/notebook/index.css';
-import 'jupyterlab/lib/notebook/theme.css';
-import 'jupyterlab/lib/notebook/completion/index.css';
+import 'jupyterlab/lib/default-theme/index.css';
+import '../index.css';
 
 let TITLE = 'Console';
 
 
 function main(): void {
-  startNewSession({
-    path: 'fake_path',
-  }).then(session => {
-    startApp(session);
+  let path = 'dummy_path';
+  let query: { [key: string]: string } = Object.create(null);
+
+  window.location.search.substr(1).split('&').forEach(item => {
+    let pair = item.split('=');
+    if (pair[0]) {
+      query[pair[0]] = pair[1];
+    }
   });
+
+  if (!query['path']) {
+    startNewSession({ path }).then(session => { startApp(session); });
+    return;
+  }
+
+  findSessionByPath(query['path'])
+    .then(model => { return connectToSession(model.id); })
+    .then(session => { startApp(session); })
+    .catch(error => {
+      console.warn(`path="${query['path']}"`, error);
+      startNewSession({ path }).then(session => { startApp(session); });
+    });
 }
 
 
 function startApp(session: ISession) {
   // Initialize the keymap manager with the bindings.
-  let keymap = new KeymapManager();
+  let commands = new CommandRegistry();
+  let keymap = new Keymap({ commands });
 
   // Setup the keydown listener for the document.
   document.addEventListener('keydown', event => {
@@ -74,7 +97,7 @@ function startApp(session: ISession) {
     new LatexRenderer(),
     new TextRenderer()
   ];
-  let renderers: MimeMap<IRenderer<Widget>> = {};
+  let renderers: RenderMime.MimeMap<RenderMime.IRenderer> = {};
   let order: string[] = [];
   for (let t of transformers) {
     for (let m of t.mimetypes) {
@@ -82,60 +105,61 @@ function startApp(session: ISession) {
       order.push(m);
     }
   }
-  let rendermime = new RenderMime<Widget>(renderers, order);
+  let sanitizer = defaultSanitizer;
+  let rendermime = new RenderMime({ renderers, order, sanitizer });
+  let renderer = CodeMirrorConsoleRenderer.defaultRenderer;
 
-  let consolePanel = new ConsolePanel({ session, rendermime });
-  consolePanel.title.text = TITLE;
+  let consolePanel = new ConsolePanel({ session, renderer, rendermime });
+  consolePanel.title.label = TITLE;
 
-  let pModel = new StandardPaletteModel();
-  let palette = new CommandPalette();
-  palette.model = pModel;
+  let palette = new CommandPalette({ commands, keymap });
 
   let panel = new SplitPanel();
   panel.id = 'main';
-  panel.orientation = SplitPanel.Horizontal;
+  panel.orientation = 'horizontal';
   panel.spacing = 0;
   SplitPanel.setStretch(palette, 0);
   SplitPanel.setStretch(consolePanel, 1);
-  panel.attach(document.body);
-  panel.addChild(palette);
-  panel.addChild(consolePanel);
+  Widget.attach(panel, document.body);
+  panel.addWidget(palette);
+  panel.addWidget(consolePanel);
   window.onresize = () => { panel.update(); };
 
-  let items: IStandardPaletteItemOptions[] = [
-    {
-      category: 'Console',
-      text: 'Clear',
-      shortcut: 'Accel R',
-      handler: () => { consolePanel.content.clear(); }
-    },
-    {
-      category: 'Console',
-      text: 'Execute Prompt',
-      shortcut: 'Shift Enter',
-      handler: () => { consolePanel.content.execute(); }
-    }
-  ];
-  pModel.addItems(items);
+  let selector = '.jp-ConsolePanel';
+  let category = 'Console';
+  let command: string;
 
-  let bindings = [
-    {
-      selector: '.jp-Console',
-      sequence: ['Accel R'],
-      handler: () => { consolePanel.content.clear(); }
-    },
-    {
-      selector: '.jp-Console',
-      sequence: ['Shift Enter'],
-      handler: () => { consolePanel.content.execute(); }
-    },
-    {
-      selector: 'body',
-      sequence: ['Escape'],
-      handler: () => { consolePanel.content.dismissOverlays(); }
-    }
-  ];
-  keymap.add(bindings);
+
+  command = 'console:clear';
+  commands.addCommand(command, {
+    label: 'Clear',
+    execute: () => { consolePanel.content.clear(); }
+  });
+  palette.addItem({ command, category });
+
+  command = 'console:execute';
+  commands.addCommand(command, {
+    label: 'Execute Prompt',
+    execute: () => { consolePanel.content.execute(); }
+  });
+  palette.addItem({ command, category });
+  keymap.addBinding({ command,  selector,  keys: ['Enter'] });
+
+  command = 'console:execute-forced';
+  commands.addCommand(command, {
+    label: 'Execute Cell (forced)',
+    execute: () => { consolePanel.content.execute(true); }
+  });
+  palette.addItem({ command, category });
+  keymap.addBinding({ command,  selector,  keys: ['Shift Enter'] });
+
+  command = 'console:linebreak';
+  commands.addCommand(command, {
+    label: 'Insert Line Break',
+    execute: () => { consolePanel.content.insertLinebreak(); }
+  });
+  palette.addItem({ command, category });
+  keymap.addBinding({ command,  selector,  keys: ['Ctrl Enter'] });
 }
 
 window.onload = main;

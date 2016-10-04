@@ -2,32 +2,36 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IKernel
+  IKernel, KernelMessage
 } from 'jupyter-js-services';
 
 import {
-  MimeData as IClipboard
-} from 'phosphor-dragdrop';
-
-import {
-  Panel, PanelLayout
-} from 'phosphor-panel';
-
-import {
-  IChangedArgs
-} from 'phosphor-properties';
-
-import {
-  ISignal, Signal
-} from 'phosphor-signaling';
-
-import {
   Message
-} from 'phosphor-messaging';
+} from 'phosphor/lib/core/messaging';
+
+import {
+  MimeData as IClipboard
+} from 'phosphor/lib/core/mimedata';
+
+import {
+  defineSignal, ISignal
+} from 'phosphor/lib/core/signaling';
+
+import {
+  Token
+} from 'phosphor/lib/core/token';
+
+import {
+  PanelLayout
+} from 'phosphor/lib/ui/panel';
 
 import {
   Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
+
+import {
+  IChangedArgs
+} from '../../common/interfaces';
 
 import {
   IDocumentContext, findKernel
@@ -38,16 +42,16 @@ import {
 } from '../../rendermime';
 
 import {
-  CompletionWidget, CompletionModel, CellCompletionHandler
-} from '../completion';
+  CompleterWidget, CompleterModel, CellCompleterHandler
+} from '../../completer';
 
 import {
   INotebookModel
 } from './model';
 
 import {
-  NotebookToolbar
-} from './toolbar';
+  Toolbar
+} from '../../toolbar';
 
 import {
   Notebook
@@ -58,11 +62,6 @@ import {
  * The class name added to notebook panels.
  */
 const NB_PANEL = 'jp-Notebook-panel';
-
-/**
- * The class name added to notebook container widgets.
- */
-const NB_CONTAINER = 'jp-Notebook-container';
 
 /**
  * The class name added to a dirty widget.
@@ -87,47 +86,45 @@ class NotebookPanel extends Widget {
     this.addClass(NB_PANEL);
     this._rendermime = options.rendermime;
     this._clipboard = options.clipboard;
-    this._renderer = options.renderer || NotebookPanel.defaultRenderer;
+    this._renderer = options.renderer;
 
     this.layout = new PanelLayout();
     let rendermime = this._rendermime;
-    this._content = this._renderer.createContent({ rendermime });
+    this._content = this._renderer.createContent(rendermime);
     let toolbar = this._renderer.createToolbar();
 
-    let container = new Panel();
-    container.addClass(NB_CONTAINER);
-    container.addChild(this._content);
-
     let layout = this.layout as PanelLayout;
-    layout.addChild(toolbar);
-    layout.addChild(container);
+    layout.addWidget(toolbar);
+    layout.addWidget(this._content);
 
-    this._completion = this._renderer.createCompletion();
-    // The completion widget's anchor node is the node whose scrollTop is
-    // pegged to the completion widget's position.
-    this._completion.anchor = container.node;
-    this._completion.attach(document.body);
+    this._completer = this._renderer.createCompleter();
+    // The completer widget's anchor node is the node whose scrollTop is
+    // pegged to the completer widget's position.
+    this._completer.anchor = this._content.node;
+    Widget.attach(this._completer, document.body);
 
-    this._completionHandler = new CellCompletionHandler(this._completion);
-    this._completionHandler.activeCell = this._content.activeCell;
+    // Set up the completer handler.
+    this._completerHandler = new CellCompleterHandler(this._completer);
+    this._completerHandler.activeCell = this._content.activeCell;
     this._content.activeCellChanged.connect((s, cell) => {
-      this._completionHandler.activeCell = cell;
+      this._completerHandler.activeCell = cell;
     });
   }
 
   /**
+   * A signal emitted when the panel has been activated.
+   */
+  activated: ISignal<NotebookPanel, void>;
+
+  /**
    * A signal emitted when the panel context changes.
    */
-  get contextChanged(): ISignal<NotebookPanel, void> {
-    return Private.contextChangedSignal.bind(this);
-  }
+  contextChanged: ISignal<NotebookPanel, void>;
 
   /**
    * A signal emitted when the kernel used by the panel changes.
    */
-  get kernelChanged(): ISignal<NotebookPanel, IKernel> {
-    return Private.kernelChangedSignal.bind(this);
-  }
+  kernelChanged: ISignal<NotebookPanel, IKernel>;
 
   /**
    * Get the toolbar used by the widget.
@@ -135,8 +132,8 @@ class NotebookPanel extends Widget {
    * #### Notes
    * This is a read-only property.
    */
-  get toolbar(): NotebookToolbar {
-    return (this.layout as PanelLayout).childAt(0) as NotebookToolbar;
+  get toolbar(): Toolbar {
+    return (this.layout as PanelLayout).widgets.at(0) as Toolbar;
   }
 
   /**
@@ -165,7 +162,7 @@ class NotebookPanel extends Widget {
    * #### Notes
    * This is a read-only property.
    */
-  get rendermime(): RenderMime<Widget> {
+  get rendermime(): RenderMime {
     return this._rendermime;
   }
 
@@ -213,6 +210,7 @@ class NotebookPanel extends Widget {
     }
     let oldValue = this._context;
     this._context = newValue;
+    this._rendermime.resolver = newValue;
     // Trigger private, protected, and public changes.
     this._onContextChanged(oldValue, newValue);
     this.onContextChanged(oldValue, newValue);
@@ -230,12 +228,27 @@ class NotebookPanel extends Widget {
     this._content = null;
     this._rendermime = null;
     this._clipboard = null;
-    this._completionHandler.dispose();
-    this._completionHandler = null;
-    this._completion.dispose();
-    this._completion = null;
+    this._completerHandler.dispose();
+    this._completerHandler = null;
+    this._completer.dispose();
+    this._completer = null;
     this._renderer = null;
     super.dispose();
+  }
+
+  /**
+   * Handle `'activate-request'` messages.
+   */
+  protected onActivateRequest(msg: Message): void {
+    this.content.activate();
+    this.activated.emit(void 0);
+  }
+
+  /**
+   * Handle `'deactivate-request'` messages.
+   */
+  protected onDeactivateRequest(msg: Message): void {
+    this.content.deactivate();
   }
 
   /**
@@ -244,7 +257,9 @@ class NotebookPanel extends Widget {
    * #### Notes
    * The default implementation is a no-op.
    */
-  protected onContextChanged(oldValue: IDocumentContext<INotebookModel>, newValue: IDocumentContext<INotebookModel>): void { }
+  protected onContextChanged(oldValue: IDocumentContext<INotebookModel>, newValue: IDocumentContext<INotebookModel>): void {
+    // This is a no-op.
+  }
 
 
   /**
@@ -260,7 +275,7 @@ class NotebookPanel extends Widget {
    * Handle a change to the document path.
    */
   protected onPathChanged(sender: IDocumentContext<INotebookModel>, path: string): void {
-    this.title.text = path.split('/').pop();
+    this.title.label = path.split('/').pop();
   }
 
   /**
@@ -294,6 +309,10 @@ class NotebookPanel extends Widget {
         oldValue.model.stateChanged.disconnect(this.onModelStateChanged, this);
       }
     }
+    if (!newValue) {
+      this._onKernelChanged(null, null);
+      return;
+    }
     let context = newValue;
     context.kernelChanged.connect(this._onKernelChanged, this);
     let oldKernel = oldValue ? oldValue.kernel : null;
@@ -317,23 +336,46 @@ class NotebookPanel extends Widget {
    * Handle a change in the kernel by updating the document metadata.
    */
   private _onKernelChanged(context: IDocumentContext<INotebookModel>, kernel: IKernel): void {
+    this._completerHandler.kernel = kernel;
+    this.content.inspectionHandler.kernel = kernel;
+    this.kernelChanged.emit(kernel);
     if (!this.model || !kernel) {
       return;
     }
-    kernel.kernelInfo().then(msg => {
-      let infoCursor = this.model.getMetadata('language_info');
-      infoCursor.setValue(msg.content.language_info);
-    });
-    kernel.getKernelSpec().then(spec => {
-      let specCursor = this.model.getMetadata('kernelspec');
-      specCursor.setValue({
-        name: kernel.name,
-        display_name: spec.display_name,
-        language: spec.language
+    if (kernel.info) {
+      this._updateLanguage(kernel.info.language_info);
+    } else {
+      kernel.kernelInfo().then(msg => {
+        this._updateLanguage(msg.content.language_info);
       });
+    }
+    if (kernel.spec) {
+      this._updateSpec(kernel);
+    } else {
+      kernel.getKernelSpec().then(spec => {
+        this._updateSpec(kernel);
+      });
+    }
+  }
+
+  /**
+   * Update the kernel language.
+   */
+  private _updateLanguage(language: KernelMessage.ILanguageInfo): void {
+    let infoCursor = this.model.getMetadata('language_info');
+    infoCursor.setValue(language);
+  }
+
+  /**
+   * Update the kernel spec.
+   */
+  private _updateSpec(kernel: IKernel): void {
+    let specCursor = this.model.getMetadata('kernelspec');
+    specCursor.setValue({
+      name: kernel.name,
+      display_name: kernel.spec.display_name,
+      language: kernel.spec.language
     });
-    this._completionHandler.kernel = kernel;
-    this.kernelChanged.emit(kernel);
   }
 
   /**
@@ -350,14 +392,20 @@ class NotebookPanel extends Widget {
     }
   }
 
-  private _rendermime: RenderMime<Widget> = null;
-  private _context: IDocumentContext<INotebookModel> = null;
   private _clipboard: IClipboard = null;
+  private _completer: CompleterWidget = null;
+  private _completerHandler: CellCompleterHandler = null;
   private _content: Notebook = null;
+  private _context: IDocumentContext<INotebookModel> = null;
   private _renderer: NotebookPanel.IRenderer = null;
-  private _completion: CompletionWidget = null;
-  private _completionHandler: CellCompletionHandler = null;
+  private _rendermime: RenderMime = null;
 }
+
+
+// Define the signals for the `NotebookPanel` class.
+defineSignal(NotebookPanel.prototype, 'activated');
+defineSignal(NotebookPanel.prototype, 'contextChanged');
+defineSignal(NotebookPanel.prototype, 'kernelChanged');
 
 
 /**
@@ -372,7 +420,7 @@ export namespace NotebookPanel {
     /**
      * The rendermime instance used by the panel.
      */
-    rendermime: RenderMime<Widget>;
+    rendermime: RenderMime;
 
     /**
      * The application clipboard.
@@ -384,7 +432,7 @@ export namespace NotebookPanel {
      *
      * The default is a shared `IRenderer` instance.
      */
-    renderer?: IRenderer;
+    renderer: IRenderer;
   }
 
   /**
@@ -395,68 +443,49 @@ export namespace NotebookPanel {
     /**
      * Create a new content area for the panel.
      */
-    createContent(options: Notebook.IOptions): Notebook;
+    createContent(rendermime: RenderMime): Notebook;
 
     /**
      * Create a new toolbar for the panel.
      */
-    createToolbar(): NotebookToolbar;
+    createToolbar(): Toolbar;
 
     /**
-     * Create a new completion widget for the panel.
+     * Create a new completer widget for the panel.
      */
-    createCompletion(): CompletionWidget;
+    createCompleter(): CompleterWidget;
   }
 
   /**
    * The default implementation of an `IRenderer`.
    */
   export
-  class Renderer implements IRenderer {
+  abstract class Renderer implements IRenderer {
     /**
      * Create a new content area for the panel.
      */
-    createContent(options: Notebook.IOptions): Notebook {
-      return new Notebook(options);
-    }
+    abstract createContent(rendermime: RenderMime): Notebook;
 
     /**
      * Create a new toolbar for the panel.
      */
-    createToolbar(): NotebookToolbar {
-      return new NotebookToolbar();
+    createToolbar(): Toolbar {
+      return new Toolbar();
     }
 
     /**
-     * Create a new completion widget.
+     * Create a new completer widget.
      */
-    createCompletion(): CompletionWidget {
-      let model = new CompletionModel();
-      return new CompletionWidget({ model });
+    createCompleter(): CompleterWidget {
+      return new CompleterWidget({ model: new CompleterModel() });
     }
   }
 
+  /* tslint:disable */
   /**
-   * The shared default instance of a `Renderer`.
-   */
-   export
-   const defaultRenderer = new Renderer();
-}
-
-
-/**
- * A namespace for private data.
- */
-namespace Private {
-  /**
-   * A signal emitted when the panel context changes.
+   * The notebook renderer token.
    */
   export
-  const contextChangedSignal = new Signal<NotebookPanel, void>();
-
-  /**
-   * A signal emitted when the kernel used by the panel changes.
-   */
-  export
-  const kernelChangedSignal = new Signal<NotebookPanel, IKernel>();
+  const IRenderer = new Token<IRenderer>('jupyter.services.notebook.renderer');
+  /* tslint:enable */
 }

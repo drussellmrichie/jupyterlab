@@ -3,7 +3,7 @@
 
 import {
   hitTest
-} from 'phosphor-domutil';
+} from 'phosphor/lib/dom/query';
 
 
 /**

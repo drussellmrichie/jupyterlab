@@ -8,12 +8,8 @@ import {
 } from 'jupyter-js-services/lib/mockkernel';
 
 import {
-  ListChangeType
-} from 'phosphor-observablelist';
-
-import {
   deepEqual
-} from '../../../../lib/notebook/common/json';
+} from 'phosphor/lib/algorithm/json';
 
 import {
   OutputAreaModel
@@ -93,11 +89,11 @@ describe('notebook/output-area/model', () => {
         let called = false;
         model.changed.connect((sender, args) => {
           expect(sender).to.be(model);
-          expect(args.type).to.be(ListChangeType.Add);
+          expect(args.type).to.be('add');
           expect(args.oldIndex).to.be(-1);
           expect(args.newIndex).to.be(0);
           expect(args.oldValue).to.be(void 0);
-          expect(deepEqual(args.newValue, DEFAULT_OUTPUTS[0]));
+          expect(deepEqual(args.newValue as nbformat.IOutput, DEFAULT_OUTPUTS[0]));
           called = true;
         });
         model.add(DEFAULT_OUTPUTS[0]);
@@ -115,11 +111,6 @@ describe('notebook/output-area/model', () => {
         expect(model.length).to.be(1);
       });
 
-      it('should be read-only', () => {
-        let model = new OutputAreaModel();
-        expect(() => { model.length = 0; }).to.throwError();
-      });
-
     });
 
     describe('#isDisposed', () => {
@@ -129,11 +120,6 @@ describe('notebook/output-area/model', () => {
         expect(model.isDisposed).to.be(false);
         model.dispose();
         expect(model.isDisposed).to.be(true);
-      });
-
-      it('should be read-only', () => {
-        let model = new OutputAreaModel();
-        expect(() => { model.isDisposed = true; }).to.throwError();
       });
 
     });

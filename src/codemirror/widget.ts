@@ -6,15 +6,13 @@ import * as CodeMirror
 
 import 'codemirror/mode/meta';
 
-import 'codemirror/lib/codemirror.css';
-
 import {
   Message
-} from 'phosphor-messaging';
+} from 'phosphor/lib/core/messaging';
 
 import {
   ResizeMessage, Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
 
 
 /**
@@ -22,6 +20,12 @@ import {
  */
 const EDITOR_CLASS = 'jp-CodeMirrorWidget';
 
+
+/**
+ * The name of the default CodeMirror theme
+ */
+export
+const DEFAULT_CODEMIRROR_THEME = 'jupyter';
 
 /**
  * A widget which hosts a CodeMirror editor.
@@ -32,9 +36,10 @@ class CodeMirrorWidget extends Widget {
   /**
    * Construct a CodeMirror widget.
    */
-  constructor(options?: CodeMirror.EditorConfiguration) {
+  constructor(options: CodeMirror.EditorConfiguration = {}) {
     super();
     this.addClass(EDITOR_CLASS);
+    options.theme = (options.theme || DEFAULT_CODEMIRROR_THEME);
     this._editor = CodeMirror(this.node, options);
   }
 
@@ -88,6 +93,13 @@ class CodeMirrorWidget extends Widget {
       this._editor.setSize(msg.width, msg.height);
     }
     this._needsRefresh = false;
+  }
+
+  /**
+   * Handle `'activate-request'` messages.
+   */
+  protected onActivateRequest(msg: Message): void {
+    this._editor.focus();
   }
 
   private _editor: CodeMirror.Editor = null;

@@ -1,20 +1,21 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import * as utils
- from 'jupyter-js-utils';
+import {
+  utils
+} from 'jupyter-js-services';
 
 import {
-  IObservableList, ListChangeType, IListChangedArgs
-} from 'phosphor-observablelist';
+  deepEqual
+} from 'phosphor/lib/algorithm/json';
 
 import {
-  IChangedArgs
-} from 'phosphor-properties';
+  clearSignalData, defineSignal, ISignal
+} from 'phosphor/lib/core/signaling';
 
 import {
-  ISignal, Signal, clearSignalData
-} from 'phosphor-signaling';
+  IObservableList, IListChangedArgs
+} from '../../common/observablelist';
 
 import {
   DocumentModel, IDocumentModel
@@ -26,8 +27,8 @@ import {
 } from '../cells/model';
 
 import {
-  deepEqual
-} from '../common/json';
+  IChangedArgs
+} from '../../common/interfaces';
 
 import {
   IMetadataCursor, MetadataCursor
@@ -47,11 +48,6 @@ import {
  */
 export
 interface INotebookModel extends IDocumentModel {
-  /**
-   * A signal emitted when a model state changes.
-   */
-  stateChanged: ISignal<IDocumentModel, IChangedArgs<any>>;
-
   /**
    * A signal emitted when a metadata field changes.
    */
@@ -174,9 +170,7 @@ class NotebookModel extends DocumentModel implements INotebookModel {
   /**
    * A signal emitted when a metadata field changes.
    */
-  get metadataChanged(): ISignal<IDocumentModel, IChangedArgs<any>> {
-    return Private.metadataChangedSignal.bind(this);
-  }
+  metadataChanged: ISignal<IDocumentModel, IChangedArgs<any>>;
 
   /**
    * Get the observable list of notebook cells.
@@ -410,14 +404,14 @@ class NotebookModel extends DocumentModel implements INotebookModel {
   private _onCellsChanged(list: IObservableList<ICellModel>, change: IListChangedArgs<ICellModel>): void {
     let cell: ICellModel;
     switch (change.type) {
-    case ListChangeType.Add:
+    case 'add':
       cell = change.newValue as ICellModel;
       cell.contentChanged.connect(this._onCellChanged, this);
       break;
-    case ListChangeType.Remove:
+    case 'remove':
       (change.oldValue as ICellModel).dispose();
       break;
-    case ListChangeType.Replace:
+    case 'replace':
       let newValues = change.newValue as ICellModel[];
       for (cell of newValues) {
         cell.contentChanged.connect(this._onCellChanged, this);
@@ -427,7 +421,7 @@ class NotebookModel extends DocumentModel implements INotebookModel {
         cell.dispose();
       }
       break;
-    case ListChangeType.Set:
+    case 'set':
       cell = change.newValue as ICellModel;
       cell.contentChanged.connect(this._onCellChanged, this);
       if (change.oldValue) {
@@ -436,6 +430,16 @@ class NotebookModel extends DocumentModel implements INotebookModel {
       break;
     default:
       return;
+    }
+    // Add code cell if there are no cells remaining.
+    if (!this._cells.length) {
+      // Add the cell in a new context to avoid triggering another
+      // cell changed event during the handling of this signal.
+      requestAnimationFrame(() => {
+        if (!this._cells.length) {
+          this._cells.add(this._factory.createCodeCell());
+        }
+      });
     }
     this.contentChanged.emit(void 0);
     this.dirty = true;
@@ -456,6 +460,10 @@ class NotebookModel extends DocumentModel implements INotebookModel {
   private _nbformat = nbformat.MAJOR_VERSION;
   private _nbformatMinor = nbformat.MINOR_VERSION;
 }
+
+
+// Define the signals for the `NotebookModel` class.
+defineSignal(NotebookModel.prototype, 'metadataChanged');
 
 
 /**
@@ -535,12 +543,6 @@ namespace NotebookModel {
  * A private namespace for notebook model data.
  */
 namespace Private {
-  /**
-   * A signal emitted when a metadata field changes.
-   */
-  export
-  const metadataChangedSignal = new Signal<IDocumentModel, IChangedArgs<any>>();
-
   /**
    * Create the default metadata for the notebook.
    */

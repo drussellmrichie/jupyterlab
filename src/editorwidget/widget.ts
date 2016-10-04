@@ -11,20 +11,25 @@ import {
 } from 'jupyter-js-services';
 
 import {
+  Token
+} from 'phosphor/lib/core/token';
+
+import {
+  FocusTracker
+} from 'phosphor/lib/ui/focustracker';
+
+import {
   loadModeByFileName
 } from '../codemirror';
 
 import {
-  CodeMirrorWidget
+  CodeMirrorWidget, DEFAULT_CODEMIRROR_THEME
 } from '../codemirror/widget';
 
 import {
   ABCWidgetFactory, IDocumentModel, IDocumentContext
 } from '../docregistry';
 
-import {
-  tracker
-} from './plugin';
 
 /**
  * The class name added to a dirty widget.
@@ -38,6 +43,22 @@ const EDITOR_CLASS = 'jp-EditorWidget';
 
 
 /**
+ * A class that tracks editor widgets.
+ */
+export
+interface IEditorTracker extends FocusTracker<EditorWidget> {}
+
+
+/* tslint:disable */
+/**
+ * The editor tracker token.
+ */
+export
+const IEditorTracker = new Token<IEditorTracker>('jupyter.services.editor-tracker');
+/* tslint:enable */
+
+
+/**
  * A document widget for codemirrors.
  */
 export
@@ -46,15 +67,23 @@ class EditorWidget extends CodeMirrorWidget {
    * Construct a new editor widget.
    */
   constructor(context: IDocumentContext<IDocumentModel>) {
-    super();
-    tracker.addWidget(this);
+    super({
+      extraKeys: {
+        'Tab': 'indentMore',
+        'Shift-Enter': () => { /* no-op */ }
+      },
+      indentUnit: 4,
+      theme: DEFAULT_CODEMIRROR_THEME,
+      lineNumbers: true,
+      lineWrapping: true,
+    });
     this.addClass(EDITOR_CLASS);
+    this._context = context;
     let editor = this.editor;
     let model = context.model;
-    editor.setOption('lineNumbers', true);
     let doc = editor.getDoc();
     doc.setValue(model.toString());
-    this.title.text = context.path.split('/').pop();
+    this.title.label = context.path.split('/').pop();
     loadModeByFileName(editor, context.path);
     model.stateChanged.connect((m, args) => {
       if (args.name === 'dirty') {
@@ -67,7 +96,7 @@ class EditorWidget extends CodeMirrorWidget {
     });
     context.pathChanged.connect((c, path) => {
       loadModeByFileName(editor, path);
-      this.title.text = path.split('/').pop();
+      this.title.label = path.split('/').pop();
     });
     model.contentChanged.connect(() => {
       let old = doc.getValue();
@@ -82,6 +111,15 @@ class EditorWidget extends CodeMirrorWidget {
       }
     });
   }
+
+  /**
+   * Get the context for the editor widget.
+   */
+  get context(): IDocumentContext<IDocumentModel> {
+    return this._context;
+  }
+
+  private _context: IDocumentContext<IDocumentModel>;
 }
 
 

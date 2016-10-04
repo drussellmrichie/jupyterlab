@@ -2,11 +2,27 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  Application
-} from 'phosphide/lib/core/application';
+  each
+} from 'phosphor/lib/algorithm/iteration';
 
 import {
-  DocumentRegistry
+  AttachedProperty
+} from 'phosphor/lib/core/properties';
+
+import {
+  FocusTracker
+} from 'phosphor/lib/ui/focustracker';
+
+import {
+  Menu
+} from 'phosphor/lib/ui/menu';
+
+import {
+  JupyterLab, JupyterLabPlugin
+} from '../application';
+
+import {
+  IDocumentRegistry
 } from '../docregistry';
 
 import {
@@ -14,45 +30,26 @@ import {
 } from './widget';
 
 import {
-  MainMenu
-} from '../mainmenu/plugin';
+  ICommandPalette
+} from '../commandpalette';
 
 import {
-  WidgetTracker
-} from '../widgettracker';
+  IMainMenu
+} from '../mainmenu';
 
 import {
-  MenuItem, Menu
-} from 'phosphor-menus';
+  IEditorTracker
+} from './index';
 
-import 'codemirror/theme/material.css';
-import 'codemirror/theme/zenburn.css';
-import 'codemirror/theme/abcdef.css';
-import 'codemirror/theme/base16-light.css';
-import 'codemirror/theme/base16-dark.css';
-import 'codemirror/theme/dracula.css';
-import 'codemirror/theme/hopscotch.css';
-import 'codemirror/theme/mbo.css';
-import 'codemirror/theme/mdn-like.css';
-import 'codemirror/theme/seti.css';
-import 'codemirror/theme/the-matrix.css';
-import 'codemirror/theme/xq-light.css';
+import {
+  DEFAULT_CODEMIRROR_THEME
+} from '../codemirror/widget';
+
 import 'codemirror/addon/edit/matchbrackets.js';
 import 'codemirror/addon/edit/closebrackets.js';
 import 'codemirror/addon/comment/comment.js';
 import 'codemirror/keymap/vim.js';
 
-export
-class EditorTracker extends WidgetTracker<EditorWidget> { }
-
-export
-let tracker = new EditorTracker();
-
-let currentApp : Application;
-let activeEditor : EditorWidget;
-tracker.activeWidgetChanged.connect((sender, widget) => {
-  activeEditor = widget;
-});
 
 /**
  * The class name for all main area portrait tab icons.
@@ -62,38 +59,48 @@ const PORTRAIT_ICON_CLASS = 'jp-MainAreaPortraitIcon';
 /**
  * The class name for the text editor icon from the default theme.
  */
-const TEXTEDITOR_ICON_CLASS = 'jp-ImageTextEditor';
+const EDITOR_ICON_CLASS = 'jp-ImageTextEditor';
 
 
 /**
  * The editor handler extension.
  */
 export
-const editorHandlerExtension = {
-  id: 'jupyter.extensions.editorHandler',
-  requires: [DocumentRegistry, MainMenu],
-  activate: activateEditorHandler
+const editorHandlerProvider: JupyterLabPlugin<IEditorTracker> = {
+  id: 'jupyter.services.editor-handler',
+  requires: [IDocumentRegistry, IMainMenu, ICommandPalette],
+  provides: IEditorTracker,
+  activate: activateEditorHandler,
+  autoStart: true
 };
+
+
+/**
+ * The map of command ids used by the editor.
+ */
+const cmdIds = {
+  lineNumbers: 'editor:line-numbers',
+  lineWrap: 'editor:line-wrap',
+  matchBrackets: 'editor:match-brackets',
+  vimMode: 'editor:vim-mode',
+  closeAll: 'editor:close-all',
+  changeTheme: 'editor:change-theme',
+  createConsole: 'editor:create-console',
+  runCode: 'editor:run-code'
+};
+
 
 /**
  * Sets up the editor widget
  */
-function activateEditorHandler(app: Application, registry: DocumentRegistry, mainMenu: MainMenu) {
-  let saveFile = 'editor:save-file';
-  let lineNumbers = 'editor:line-numbers';
-  let lineWrap = 'editor:line-wrap';
-  let matchBrackets = 'editor:match-brackets';
-  let vimMode = 'editor:vim-mode';
-  let defaultMode = 'editor:default-mode';
-  let closeAll = 'editor:close-all';
-
-  let editorMenu = new MenuItem({
-    text: 'Editor',
-    submenu: menu
+function activateEditorHandler(app: JupyterLab, registry: IDocumentRegistry, mainMenu: IMainMenu, palette: ICommandPalette): IEditorTracker {
+  let tracker = new FocusTracker<EditorWidget>();
+  let widgetFactory = new EditorWidgetFactory();
+  widgetFactory.widgetCreated.connect((sender, widget) => {
+    widget.title.icon = `${PORTRAIT_ICON_CLASS} ${EDITOR_ICON_CLASS}`;
+    tracker.add(widget);
   });
-  currentApp = app;
-  mainMenu.addItem(editorMenu, {rank: 30});
-  registry.addWidgetFactory(new EditorWidgetFactory(),
+  registry.addWidgetFactory(widgetFactory,
   {
     fileExtensions: ['*'],
     displayName: 'Editor',
@@ -103,299 +110,191 @@ function activateEditorHandler(app: Application, registry: DocumentRegistry, mai
     canStartKernel: false
   });
 
-  app.commands.add([
-  {
-    id: saveFile,
-    handler: saveDoc
-  },
-  {
-    id: lineNumbers,
-    handler: toggleLineNums
-  },
-  {
-    id: lineWrap,
-    handler: toggleLineWrap
-  },
-  {
-    id: matchBrackets,
-    handler: toggleMatchBrackets
-  },
-  {
-    id: defaultMode,
-    handler: toggleDefault
-  },
-  {
-    id: vimMode,
-    handler: toggleVim
-  },
-  {
-    id: closeAll,
-    handler: closeAllFiles
-  }
-  ]);
+  mainMenu.addMenu(createMenu(app, tracker), {rank: 30});
 
-  app.palette.add([
-  {
-    command: saveFile,
-    category: 'Editor',
-    text: 'Save File',
-    caption: 'Save the currently open text file'
-  },
-  {
-    command: lineNumbers,
-    category: 'Editor',
-    text: 'Line Numbers',
-    caption: 'Toggles the line numbers on the editor'
-  },
-  {
-    command: lineWrap,
-    category: 'Editor',
-    text: 'Line Wrap',
-    caption: 'Toggles line wrapping on the editor'
-  },
-  {
-    command: matchBrackets,
-    category: 'Editor',
-    text: 'Match Brackets',
-    caption: 'Toggles bracket matching on the editor'
-  },
-  {
-    command: defaultMode,
-    category: 'Editor',
-    text: 'Vim Mode Off',
-    caption: 'Turns off vim mode (default)'
-  },
-  {
-    command: vimMode,
-    category: 'Editor',
-    text: 'Vim Mode',
-    caption: 'Turns on vim mode'
-  },
-  {
-    command: closeAll,
-    category: 'Editor',
-    text: 'Close all files',
-    caption: 'Closes all currently open text files'
-  }
-  ]);
+  let commands = app.commands;
+
+  commands.addCommand(cmdIds.lineNumbers, {
+    execute: () => { toggleLineNums(tracker); },
+    label: 'Toggle Line Numbers',
+  });
+
+  commands.addCommand(cmdIds.lineWrap, {
+    execute: () => { toggleLineWrap(tracker); },
+    label: 'Toggle Line Wrap',
+  });
+
+  commands.addCommand(cmdIds.matchBrackets, {
+    execute: () => { toggleMatchBrackets(tracker); },
+    label: 'Toggle Match Brackets',
+  });
+
+  commands.addCommand(cmdIds.vimMode, {
+    execute: () => { toggleVim(tracker); },
+    label: 'Toggle Vim Mode'
+  });
+
+  commands.addCommand(cmdIds.closeAll, {
+    execute: () => { closeAllFiles(tracker); },
+    label: 'Close all files'
+  });
+
+  commands.addCommand(cmdIds.createConsole, {
+    execute: () => {
+      let widget = tracker.currentWidget;
+      if (!widget) {
+        return;
+      }
+      let options: any = {
+        path: widget.context.path,
+        preferredLanguage: widget.context.model.defaultKernelLanguage
+      };
+      commands.execute('console:create', options).then(id => {
+        sessionIdProperty.set(widget, id);
+      });
+    },
+    label: 'Create Console for Editor'
+  });
+
+  commands.addCommand(cmdIds.runCode, {
+    execute: () => {
+      let widget = tracker.currentWidget;
+      if (!widget) {
+        return;
+      }
+      // Get the session id.
+      let id = sessionIdProperty.get(widget);
+      if (!id) {
+        return;
+      }
+      // Get the selected code from the editor.
+      let doc = widget.editor.getDoc();
+      let code = doc.getSelection();
+      if (!code) {
+        let { line } = doc.getCursor();
+        code = doc.getLine(line);
+      }
+      commands.execute('console:inject', { id, code });
+    },
+    label: 'Run Code',
+  });
+
+  [
+    cmdIds.lineNumbers,
+    cmdIds.lineWrap,
+    cmdIds.matchBrackets,
+    cmdIds.vimMode,
+    cmdIds.closeAll,
+    cmdIds.createConsole,
+    cmdIds.runCode,
+  ].forEach(command => palette.addItem({ command, category: 'Editor' }));
+
+  return tracker;
 }
 
-let liNums = true;
-let liWrap = false;
-let matchBracks = false;
+
 
 /**
- * Saves the current document
+ * An attached property for the session id associated with an editor widget.
  */
-function saveDoc() {
-  currentApp.commands.execute('file-operations:save');
-}
+const sessionIdProperty = new AttachedProperty<EditorWidget, string>({ name: 'sessionId' });
 
-/**
- * Creates a new text file
- */
-function newFile() {
-  currentApp.commands.execute('file-operations:new-text-file');
-}
+
 
 /**
  * Toggle editor line numbers
  */
-function toggleLineNums() {
-  if (!tracker.isDisposed) {
-    let editors = tracker.widgets;
-    liNums = !liNums;
-    for (let i = 0; i < editors.length; i++) {
-      editors[i].editor.setOption('lineNumbers', liNums);
-    }
+function toggleLineNums(tracker: IEditorTracker) {
+  if (tracker.currentWidget) {
+    let editor = tracker.currentWidget.editor;
+    editor.setOption('lineNumbers', !editor.getOption('lineNumbers'));
   }
 }
 
 /**
  * Toggle editor line wrap
  */
-function toggleLineWrap() {
-  if (!tracker.isDisposed) {
-    let editors = tracker.widgets;
-    liWrap = !liWrap;
-    for (let i = 0; i < editors.length; i++) {
-      editors[i].editor.setOption('lineWrap', liWrap);
-    }
+function toggleLineWrap(tracker: IEditorTracker) {
+  if (tracker.currentWidget) {
+    let editor = tracker.currentWidget.editor;
+    editor.setOption('lineWrapping', !editor.getOption('lineWrapping'));
   }
 }
 
 /**
  * Toggle editor matching brackets
  */
-function toggleMatchBrackets() {
-  if (!tracker.isDisposed) {
-    let editors = tracker.widgets;
-    matchBracks = !matchBracks;
-    for (let i = 0; i < editors.length; i++) {
-      editors[i].editor.setOption('matchBrackets', matchBracks);
-    }
+function toggleMatchBrackets(tracker: IEditorTracker) {
+  if (tracker.currentWidget) {
+    let editor = tracker.currentWidget.editor;
+    editor.setOption('matchBrackets', !editor.getOption('matchBrackets'));
   }
 }
 
 /**
- * Turns on the editor's vim mode
+ * Toggle the editor's vim mode
  */
-function toggleVim() {
-  let editors = tracker.widgets;
-  for (let i = 0; i < editors.length; i++) {
-    editors[i].editor.setOption('keyMap', 'vim');
-  }
-}
-
-/**
- * Sets the editor to default editing mode
- */
-function toggleDefault() {
-  if (!tracker.isDisposed) {
-    let editors = tracker.widgets;
-    for (let i = 0; i < editors.length; i++) {
-      editors[i].editor.setOption('keyMap', 'default');
-    }
-  }
+function toggleVim(tracker: IEditorTracker) {
+  each(tracker.widgets, widget => {
+    widget.editor.setOption('keyMap',
+                            (widget.editor.getOption('keyMap')==='vim'
+                             ? 'default' : 'vim'));
+  });
 }
 
 /**
  * Close all currently open text editor files
  */
-function closeAllFiles() {
-  if (!tracker.isDisposed) {
-    let editors = tracker.widgets;
-    for (let i = 0; i < editors.length; i++) {
-      editors[i].close();
-    }
-  }
+function closeAllFiles(tracker: IEditorTracker) {
+  each(tracker.widgets, widget => {
+    widget.close();
+  });
 }
 
-/**
- * Handlers and menu items for the editor widget menu bar item
- */
-let themeHandler = (item : MenuItem) => {
-  let editors = tracker.widgets;
-  for (let i = 0; i < editors.length; i++) {
-    editors[i].editor.setOption('theme', item.text);
-  }
-};
-
-let file = new Menu([
-  new MenuItem({
-    text: 'New file',
-    handler: newFile,
-    shortcut: 'Ctrl-O'
-  }),
-  new MenuItem({
-    text: 'Save',
-    handler: saveDoc,
-    shortcut: 'Cmd-S'
-  }),
-  new MenuItem({
-    text: 'Close all editors',
-    handler: closeAllFiles
-  })
-  ]);
-
-let settings = new Menu([
-  new MenuItem({
-    text: 'Line Numbers',
-    handler: toggleLineNums
-  }),
-  new MenuItem({
-    text: 'Line Wrapping',
-    handler: toggleLineWrap
-  }),
-  new MenuItem({
-    text: 'Match Brackets',
-    handler: toggleMatchBrackets
-  }),
-  new MenuItem({
-    text: 'Default Mode',
-    handler: toggleDefault,
-    shortcut: 'Ctrl+D'
-  }),
-  new MenuItem({
-    text: 'Vim Mode',
-    handler: toggleVim
-  }),
-  ]);
-
-let themes = new Menu([
-  new MenuItem({
-    text: 'default',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'abcdef',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'base16-dark',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'base16-light',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'hopscotch',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'material',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'mbo',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'mdn-like',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'seti',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'the-matrix',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'xq-light',
-    handler: themeHandler
-  }),
-  new MenuItem({
-    text: 'zenburn',
-    handler: themeHandler
-  })
-  ]);
-
-let menu = new Menu([
-  new MenuItem({
-    text: 'File',
-    submenu: file
-  }),
-  new MenuItem({
-    text: 'Settings',
-    submenu: settings
-  }),
-  new MenuItem({
-    text: 'Themes',
-    submenu: themes
-  })
-  ]);
 
 /**
- * The editor widget tracker provider
+ * Create a menu for the editor.
  */
-export
-const editorTrackerProvider = {
-  id: 'jupyter.plugins.editorTracker',
-  provides: EditorTracker,
-  resolve: () => {
-    return tracker;
-  }
-};
+function createMenu(app: JupyterLab, tracker: IEditorTracker): Menu {
+  let { commands, keymap } = app;
+  let settings = new Menu({ commands, keymap });
+  let theme = new Menu({ commands, keymap });
+  let menu = new Menu({ commands, keymap });
+
+  menu.title.label = 'Editor';
+  settings.title.label = 'Settings';
+  theme.title.label = 'Theme';
+
+  settings.addItem({ command: cmdIds.lineNumbers });
+  settings.addItem({ command: cmdIds.lineWrap });
+  settings.addItem({ command: cmdIds.matchBrackets });
+  settings.addItem({ command: cmdIds.vimMode });
+
+  commands.addCommand(cmdIds.changeTheme, {
+    label: args => {
+      return args['theme'] as string;
+    },
+    execute: args => {
+      let name: string = args['theme'] as string || DEFAULT_CODEMIRROR_THEME;
+      each(tracker.widgets, widget => {
+        widget.editor.setOption('theme', name);
+      });
+    }
+  });
+
+  [
+   'jupyter', 'default', 'abcdef', 'base16-dark', 'base16-light',
+   'hopscotch', 'material', 'mbo', 'mdn-like', 'seti', 'the-matrix',
+   'xq-light', 'zenburn'
+  ].forEach(name => theme.addItem({
+    command: 'editor:change-theme',
+    args: { theme: name }
+  }));
+
+  menu.addItem({ command: cmdIds.closeAll });
+  menu.addItem({ type: 'separator' });
+  menu.addItem({ type: 'submenu', menu: settings });
+  menu.addItem({ type: 'submenu', menu: theme });
+
+  return menu;
+}

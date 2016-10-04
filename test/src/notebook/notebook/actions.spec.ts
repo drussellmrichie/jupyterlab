@@ -13,7 +13,7 @@ import {
 
 import {
   MimeData
-} from 'phosphor-dragdrop';
+} from 'phosphor/lib/core/mimedata';
 
 import {
   CodeCellWidget, MarkdownCellWidget, RawCellWidget
@@ -39,6 +39,10 @@ import {
   DEFAULT_CONTENT
 } from '../utils';
 
+import {
+  CodeMirrorNotebookRenderer
+} from '../../../../lib/notebook/codemirror/notebook/widget';
+
 
 const clipboard = new MimeData();
 
@@ -51,7 +55,10 @@ describe('notebook/notebook/actions', () => {
     let kernel: IKernel;
 
     beforeEach(() => {
-      widget = new Notebook({ rendermime: defaultRenderMime() });
+      widget = new Notebook({
+        rendermime: defaultRenderMime(),
+        renderer: CodeMirrorNotebookRenderer.defaultRenderer
+      });
       let model = new NotebookModel();
       model.fromJSON(DEFAULT_CONTENT);
       widget.model = model;
@@ -154,11 +161,14 @@ describe('notebook/notebook/actions', () => {
       it('should merge the selected cells', () => {
         let source = widget.activeCell.model.source + '\n\n';
         let next = widget.childAt(1);
-        source += next.model.source;
         widget.select(next);
+        source += next.model.source + '\n\n';
+        next = widget.childAt(2);
+        widget.select(next);
+        source += next.model.source;
         let count = widget.childCount();
         NotebookActions.mergeCells(widget);
-        expect(widget.childCount()).to.be(count - 1);
+        expect(widget.childCount()).to.be(count - 2);
         expect(widget.activeCell.model.source).to.be(source);
       });
 
@@ -208,12 +218,14 @@ describe('notebook/notebook/actions', () => {
         NotebookActions.mergeCells(widget);
         cell = widget.activeCell as MarkdownCellWidget;
         expect(cell.rendered).to.be(false);
+        expect(widget.mode).to.be('command');
       });
 
       it('should preserve the cell type of the active cell', () => {
         NotebookActions.changeCellType(widget, 'raw');
         NotebookActions.mergeCells(widget);
         expect(widget.activeCell).to.be.a(RawCellWidget);
+        expect(widget.mode).to.be('command');
       });
 
     });
@@ -240,21 +252,31 @@ describe('notebook/notebook/actions', () => {
         expect(widget.mode).to.be('command');
       });
 
-      it('should activate the cell before the first selected cell', () => {
+      it('should activate the cell after the last selected cell', () => {
         widget.activeCellIndex = 4;
         let prev = widget.childAt(2);
         widget.select(prev);
         NotebookActions.deleteCells(widget);
-        expect(widget.activeCellIndex).to.be(1);
+        expect(widget.activeCellIndex).to.be(3);
       });
 
-      it('should add a code cell if all cells are deleted', () => {
+      it('should select the previous cell if the last cell is deleted', () => {
+        widget.select(widget.childAt(widget.childCount() - 1));
+        NotebookActions.deleteCells(widget);
+        expect(widget.activeCellIndex).to.be(widget.childCount() - 1);
+      });
+
+      it('should add a code cell if all cells are deleted', (done) => {
         for (let i = 0; i < widget.childCount(); i++) {
           widget.select(widget.childAt(i));
         }
         NotebookActions.deleteCells(widget);
-        expect(widget.childCount()).to.be(1);
-        expect(widget.activeCell).to.be.a(CodeCellWidget);
+        requestAnimationFrame(() => {
+          expect(widget.childCount()).to.be(1);
+          expect(widget.activeCell).to.be.a(CodeCellWidget);
+          done();
+        });
+
       });
 
       it('should be undo-able', () => {
@@ -869,6 +891,22 @@ describe('notebook/notebook/actions', () => {
         expect(widget.isSelected(last)).to.be(false);
       });
 
+      it('should deselect the current cell if the cell above is selected', () => {
+        NotebookActions.extendSelectionBelow(widget);
+        NotebookActions.extendSelectionBelow(widget);
+        let cell = widget.activeCell;
+        NotebookActions.extendSelectionAbove(widget);
+        expect(widget.isSelected(cell)).to.be(false);
+      });
+
+      it('should select only the first cell if we move from the second to first', () => {
+        NotebookActions.extendSelectionBelow(widget);
+        let cell = widget.activeCell;
+        NotebookActions.extendSelectionAbove(widget);
+        expect(widget.isSelected(cell)).to.be(false);
+        expect(widget.activeCellIndex).to.be(0);
+      });
+
       it('should activate the cell', () => {
         widget.activeCellIndex = 1;
         NotebookActions.extendSelectionAbove(widget);
@@ -905,9 +943,97 @@ describe('notebook/notebook/actions', () => {
         expect(widget.isSelected(widget.childAt(0))).to.be(false);
       });
 
+      it('should deselect the current cell if the cell below is selected', () => {
+        let last = widget.childCount() - 1;
+        widget.activeCellIndex = last;
+        NotebookActions.extendSelectionAbove(widget);
+        NotebookActions.extendSelectionAbove(widget);
+        let current = widget.activeCell;
+        NotebookActions.extendSelectionBelow(widget);
+        expect(widget.isSelected(current)).to.be(false);
+      });
+
+      it('should select only the last cell if we move from the second last to last', () => {
+        let last = widget.childCount() - 1;
+        widget.activeCellIndex = last;
+        NotebookActions.extendSelectionAbove(widget);
+        let current = widget.activeCell;
+        NotebookActions.extendSelectionBelow(widget);
+        expect(widget.isSelected(current)).to.be(false);
+        expect(widget.activeCellIndex).to.be(last);
+      });
+
       it('should activate the cell', () => {
         NotebookActions.extendSelectionBelow(widget);
         expect(widget.activeCellIndex).to.be(1);
+      });
+
+    });
+
+    describe('#moveUp()', () => {
+
+      it('should move the selected cells up', () => {
+        widget.activeCellIndex = 2;
+        NotebookActions.extendSelectionAbove(widget);
+        NotebookActions.moveUp(widget);
+        expect(widget.isSelected(widget.childAt(0))).to.be(true);
+        expect(widget.isSelected(widget.childAt(1))).to.be(true);
+        expect(widget.isSelected(widget.childAt(2))).to.be(false);
+        expect(widget.activeCellIndex).to.be(0);
+      });
+
+      it('should be a no-op if there is no model', () => {
+        widget.model = null;
+        NotebookActions.moveUp(widget);
+        expect(widget.activeCellIndex).to.be(-1);
+      });
+
+      it('should not wrap around to the bottom', () => {
+        expect(widget.activeCellIndex).to.be(0);
+        NotebookActions.moveUp(widget);
+        expect(widget.activeCellIndex).to.be(0);
+      });
+
+      it('should be undo-able', () => {
+        widget.activeCellIndex++;
+        let source = widget.activeCell.model.source;
+        NotebookActions.moveUp(widget);
+        expect(widget.model.cells.get(0).source).to.be(source);
+        NotebookActions.undo(widget);
+        expect(widget.model.cells.get(1).source).to.be(source);
+      });
+
+    });
+
+    describe('#moveDown()', () => {
+
+      it('should move the selected cells down', () => {
+        NotebookActions.extendSelectionBelow(widget);
+        NotebookActions.moveDown(widget);
+        expect(widget.isSelected(widget.childAt(0))).to.be(false);
+        expect(widget.isSelected(widget.childAt(1))).to.be(true);
+        expect(widget.isSelected(widget.childAt(2))).to.be(true);
+        expect(widget.activeCellIndex).to.be(2);
+      });
+
+      it('should be a no-op if there is no model', () => {
+        widget.model = null;
+        NotebookActions.moveUp(widget);
+        expect(widget.activeCellIndex).to.be(-1);
+      });
+
+      it('should not wrap around to the top', () => {
+        widget.activeCellIndex = widget.childCount() - 1;
+        NotebookActions.moveDown(widget);
+        expect(widget.activeCellIndex).to.be(widget.childCount() - 1);
+      });
+
+      it('should be undo-able', () => {
+        let source = widget.activeCell.model.source;
+        NotebookActions.moveDown(widget);
+        expect(widget.model.cells.get(1).source).to.be(source);
+        NotebookActions.undo(widget);
+        expect(widget.model.cells.get(0).source).to.be(source);
       });
 
     });
@@ -988,7 +1114,8 @@ describe('notebook/notebook/actions', () => {
         widget.activeCellIndex = 1;
         NotebookActions.paste(widget, clipboard);
         expect(widget.childCount()).to.be(count);
-        expect(widget.childAt(1).model.source).to.be(source);
+        expect(widget.childAt(2).model.source).to.be(source);
+        expect(widget.activeCellIndex).to.be(3);
       });
 
       it('should be a no-op if there is no model', () => {

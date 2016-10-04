@@ -1,32 +1,33 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import * as utils
- from 'jupyter-js-utils';
-
 import {
-  IDisposable
-} from 'phosphor-disposable';
-
-import {
-  IChangedArgs
-} from 'phosphor-properties';
-
-import {
-  ISignal, Signal, clearSignalData
-} from 'phosphor-signaling';
-
-import {
-  nbformat
-} from '../notebook/nbformat';
+  utils
+} from 'jupyter-js-services';
 
 import {
   deepEqual
-} from '../common/json';
+} from 'phosphor/lib/algorithm/json';
+
+import {
+  IDisposable
+} from 'phosphor/lib/core/disposable';
+
+import {
+  clearSignalData, defineSignal, ISignal
+} from 'phosphor/lib/core/signaling';
+
+import {
+  IChangedArgs
+} from '../../common/interfaces';
 
 import {
   IMetadataCursor, MetadataCursor
 } from '../common/metadata';
+
+import {
+  nbformat
+} from '../notebook/nbformat';
 
 import {
   OutputAreaModel
@@ -52,14 +53,14 @@ interface ICellModel extends IDisposable {
   contentChanged: ISignal<ICellModel, void>;
 
   /**
-   * A signal emitted when a model state changes.
-   */
-  stateChanged: ISignal<ICellModel, IChangedArgs<any>>;
-
-  /**
    * A signal emitted when a metadata field changes.
    */
   metadataChanged: ISignal<ICellModel, IChangedArgs<any>>;
+
+  /**
+   * A signal emitted when a model state changes.
+   */
+  stateChanged: ISignal<ICellModel, IChangedArgs<any>>;
 
   /**
    * The input content of the cell.
@@ -177,23 +178,17 @@ class CellModel implements ICellModel {
   /**
    * A signal emitted when the state of the model changes.
    */
-  get contentChanged(): ISignal<ICellModel, void> {
-    return Private.contentChangedSignal.bind(this);
-  }
-
-  /**
-   * A signal emitted when a model state changes.
-   */
-  get stateChanged(): ISignal<ICellModel, IChangedArgs<any>> {
-    return Private.stateChangedSignal.bind(this);
-  }
+  contentChanged: ISignal<ICellModel, void>;
 
   /**
    * A signal emitted when a metadata field changes.
    */
-  get metadataChanged(): ISignal<ICellModel, IChangedArgs<any>> {
-    return Private.metadataChangedSignal.bind(this);
-  }
+  metadataChanged: ISignal<ICellModel, IChangedArgs<any>>;
+
+  /**
+   * A signal emitted when a model state changes.
+   */
+  stateChanged: ISignal<ICellModel, IChangedArgs<any>>;
 
   /**
    * The input content of the cell.
@@ -244,7 +239,7 @@ class CellModel implements ICellModel {
     return {
       cell_type: this.type,
       source: this.source,
-      metadata: utils.copy(this._metadata)
+      metadata: utils.copy(this._metadata) as nbformat.IBaseCellMetadata
     };
   }
 
@@ -308,6 +303,12 @@ class CellModel implements ICellModel {
   private _cursors: { [key: string]: MetadataCursor } = Object.create(null);
   private _source = '';
 }
+
+
+// Define the signals for the `CellModel` class.
+defineSignal(CellModel.prototype, 'contentChanged');
+defineSignal(CellModel.prototype, 'metadataChanged');
+defineSignal(CellModel.prototype, 'stateChanged');
 
 
 /**
@@ -423,35 +424,14 @@ class CodeCellModel extends CellModel implements ICodeCellModel {
     let outputs = this.outputs;
     cell.outputs = [];
     for (let i = 0; i < outputs.length; i++) {
-      cell.outputs.push(outputs.get(i));
+      let output = outputs.get(i);
+      if (output.output_type !== 'input_request') {
+        cell.outputs.push(output as nbformat.IOutput);
+      }
     }
     return cell;
   }
 
   private _outputs: OutputAreaModel = null;
   private _executionCount: number = null;
-}
-
-
-/**
- * A namespace for cell private data.
- */
-namespace Private {
-  /**
-   * A signal emitted when the state of the model changes.
-   */
-  export
-  const contentChangedSignal = new Signal<ICellModel, void>();
-
-  /**
-   * A signal emitted when a model state changes.
-   */
-  export
-  const stateChangedSignal = new Signal<ICellModel, IChangedArgs<any>>();
-
-  /**
-   * A signal emitted when a metadata field changes.
-   */
-  export
-  const metadataChangedSignal = new Signal<ICellModel, IChangedArgs<any>>();
 }

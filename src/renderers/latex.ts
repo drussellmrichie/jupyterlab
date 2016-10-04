@@ -173,7 +173,15 @@ function init() {
     displayAlign: 'center',
     CommonHTML: {
        linebreaks: { automatic: true }
-     }
+     },
+    'HTML-CSS': {
+        availableFonts: [],
+        imageFont: null,
+        preferredFont: null,
+        webFont: 'STIX-Web',
+        styles: {'.MathJax_Display': {'margin': 0}},
+        linebreaks: { automatic: true }
+    },
   });
   MathJax.Hub.Configured();
 }
@@ -203,7 +211,7 @@ function processMath(i: number, j: number, preProcess: (input: string) => string
     j--;
   }
   blocks[i] = '@@' + math.length + '@@'; // replace the current block text with a unique tag to find later
-  if (preProcess){
+  if (preProcess) {
     block = preProcess(block);
   }
   math.push(block);

@@ -33,13 +33,45 @@ function loadModeByMIME(editor: CodeMirror.Editor, mimetype: string): void {
 }
 
 
-
 /**
  * Load a codemirror mode by mode name.
  */
 export
 function loadModeByName(editor: CodeMirror.Editor, mode: string): void {
   loadInfo(editor, CodeMirror.findModeByName(mode));
+}
+
+
+/**
+ * Require a codemirror mode by name or Codemirror spec.
+ */
+export
+function requireMode(mode: string | CodeMirror.modespec): Promise<CodeMirror.modespec> {
+  let modename = (typeof mode === 'string') ? mode :
+      mode.mode || mode.name;
+  let mimetype = (typeof mode !== 'string') ? mode.mime : '';
+  let ext = modename.split('.').pop();
+
+  // Get a modespec object by whatever means necessary.
+  let info: CodeMirror.modespec = (
+      (modename && mimetype && mode as CodeMirror.modespec) ||
+      CodeMirror.findModeByName(modename) ||
+      CodeMirror.findModeByExtension(ext) ||
+      CodeMirror.findModeByMIME(modename) ||
+      {mode: modename, mime: modename}
+  );
+
+  // Simplest, cheapest check by mode name.
+  if (CodeMirror.modes.hasOwnProperty(modename)) {
+    return Promise.resolve(info);
+  }
+
+  // Fetch the mode asynchronously.
+  return new Promise<CodeMirror.modespec>((resolve, reject) => {
+    require([`codemirror/mode/${info.mode}/${info.mode}`], () => {
+      resolve(info);
+    });
+  });
 }
 
 
@@ -51,11 +83,7 @@ function loadInfo(editor: CodeMirror.Editor, info: CodeMirror.modespec): void {
     editor.setOption('mode', 'null');
     return;
   }
-  if (CodeMirror.modes.hasOwnProperty(info.mode)) {
+  requireMode(info).then(() => {
     editor.setOption('mode', info.mime);
-  } else {
-    require([`codemirror/mode/${info.mode}/${info.mode}`], () => {
-      editor.setOption('mode', info.mime);
-    });
-  }
+  });
 }

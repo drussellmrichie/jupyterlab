@@ -6,16 +6,16 @@ import {
 } from 'jupyter-js-services';
 
 import {
-  IBoxSizing, boxSizing
-} from 'phosphor-domutil';
+  Message, sendMessage
+} from 'phosphor/lib/core/messaging';
 
 import {
-  Message, sendMessage
-} from 'phosphor-messaging';
+  boxSizing, IBoxSizing
+} from 'phosphor/lib/dom/sizing';
 
 import {
   ResizeMessage, Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
 
 import * as Xterm
   from 'xterm';
@@ -68,8 +68,8 @@ class TerminalWidget extends Widget {
     this.background = options.background || 'black';
     this.color = options.color || 'white';
     this.id = `jp-TerminalWidget-${Private.id++}`;
-    this.title.text = 'Terminal';
-    Xterm.brokenBold = true;
+    this.title.label = 'Terminal';
+    (Xterm as any).brokenBold = true;
   }
 
   /**
@@ -84,7 +84,7 @@ class TerminalWidget extends Widget {
     }
     this._session = value;
     this._session.messageReceived.connect(this._onMessage, this);
-    this.title.text = `Terminal ${this._session.name}`;
+    this.title.label = `Terminal ${this._session.name}`;
     this._resizeTerminal(-1, -1);
   }
 
@@ -205,6 +205,8 @@ class TerminalWidget extends Widget {
       case 'fit-request':
         this.onFitRequest(msg);
         break;
+      default:
+        break;
     }
   }
 
@@ -224,7 +226,6 @@ class TerminalWidget extends Widget {
     if (this._dirty) {
       this._snapTermSizing();
     }
-    this._term.focus();
   }
 
   /**
@@ -247,12 +248,30 @@ class TerminalWidget extends Widget {
    */
   protected onUpdateRequest(msg: Message): void {
     // Set the fg and bg colors of the terminal and cursor.
-    this.node.style.backgroundColor = this.background;
-    this.node.style.color = this.color;
-    this._term.element.style.backgroundColor = this.background;
-    this._term.element.style.color = this.color;
-    this._sheet.innerHTML = (`#${this.node.id} .terminal-cursor {background:
-                             ${this.color};color:${this.background};}`);
+    const style = (`
+      #${this.node.id} {
+        background: ${this.background};
+        color: ${this.color};
+      }
+      #${this.node.id} .xterm-viewport, #${this.node.id} .xterm-rows {
+        background-color: ${this.background};
+        color: ${this.color};
+      }
+      #${this.node.id} .terminal.focus .terminal-cursor.blinking {
+          animation: ${this.node.id}-blink-cursor 1.2s infinite step-end;
+      }
+      @keyframes ${this.node.id}-blink-cursor {
+          0% {
+              background-color: ${this.color};
+              color: ${this.background};
+          }
+          50% {
+              background-color: transparent;
+              color: ${this.color};
+          }
+      }
+    `);
+    this._sheet.innerHTML = style;
   }
 
   /**
@@ -261,6 +280,13 @@ class TerminalWidget extends Widget {
   protected onFitRequest(msg: Message): void {
     let resize = ResizeMessage.UnknownSize;
     sendMessage(this, resize);
+  }
+
+  /**
+   * Handle `'activate-request'` messages.
+   */
+  protected onActivateRequest(msg: Message): void {
+    this._term.focus();
   }
 
   /**
@@ -280,7 +306,7 @@ class TerminalWidget extends Widget {
     });
 
     this._term.on('title', (title: string) => {
-        this.title.text = title;
+        this.title.label = title;
     });
   }
 
@@ -294,6 +320,8 @@ class TerminalWidget extends Widget {
       break;
     case 'disconnect':
       this._term.write('\r\n\r\n[Finished... Term Session]\r\n');
+      break;
+    default:
       break;
     }
   }
@@ -457,5 +485,5 @@ namespace Private {
    * An incrementing counter for ids.
    */
   export
-  var id = 0;
+  let id = 0;
 }

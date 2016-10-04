@@ -2,16 +2,21 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  Application
-} from 'phosphide/lib/core/application';
+  JupyterLab, JupyterLabPlugin
+} from '../application';
 
 import {
-  DocumentRegistry, IWidgetFactoryOptions
+  IDocumentRegistry, IWidgetFactoryOptions
 } from '../docregistry';
+
+import {
+  IRenderMime
+} from '../rendermime';
 
 import {
   MarkdownWidgetFactory
 } from './widget';
+
 
 /**
  * The class name for all main area portrait tab icons.
@@ -25,13 +30,13 @@ const TEXTEDITOR_ICON_CLASS = 'jp-ImageTextEditor';
 
 
 /**
- * The editor handler extension.
+ * The markdown handler extension.
  */
 export
-const markdownHandlerExtension = {
-  id: 'jupyter.extensions.RenderedMarkdown',
-  requires: [DocumentRegistry],
-  activate: (app: Application, registry: DocumentRegistry) => {
+const markdownHandlerExtension: JupyterLabPlugin<void> = {
+  id: 'jupyter.extensions.rendered-markdown',
+  requires: [IDocumentRegistry, IRenderMime],
+  activate: (app: JupyterLab, registry: IDocumentRegistry, rendermime: IRenderMime) => {
     let options: IWidgetFactoryOptions = {
       fileExtensions: ['.md'],
       displayName: 'Rendered Markdown',
@@ -39,11 +44,12 @@ const markdownHandlerExtension = {
       preferKernel: false,
       canStartKernel: false
     };
-    let factory = new MarkdownWidgetFactory();
+    let factory = new MarkdownWidgetFactory(rendermime);
     let icon = `${PORTRAIT_ICON_CLASS} ${TEXTEDITOR_ICON_CLASS}`;
     factory.widgetCreated.connect((sender, widget) => {
       widget.title.icon = icon;
     });
     registry.addWidgetFactory(factory, options);
-  }
+  },
+  autoStart: true
 };

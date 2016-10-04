@@ -5,23 +5,33 @@ import {
   IContents
 } from 'jupyter-js-services';
 
-import * as moment
-  from 'moment';
-
-import * as arrays
-  from 'phosphor-arrays';
-
 import {
-  Drag, DropAction, DropActions, IDragEvent, MimeData
-} from 'phosphor-dragdrop';
+  find, findIndex
+} from 'phosphor/lib/algorithm/searching';
 
 import {
   Message
-} from 'phosphor-messaging';
+} from 'phosphor/lib/core/messaging';
+
+import {
+  MimeData
+} from 'phosphor/lib/core/mimedata';
+
+import {
+  Drag, IDragEvent
+} from 'phosphor/lib/dom/dragdrop';
+
+import {
+  scrollIntoViewIfNeeded
+} from 'phosphor/lib/dom/query';
 
 import {
   Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
+
+import {
+  humanTime, dateTime
+} from '../common/dates';
 
 import {
   showDialog
@@ -32,12 +42,16 @@ import {
 } from '../docmanager';
 
 import {
-  FileBrowserModel
-} from './model';
-
-import {
   IWidgetOpener
 } from './browser';
+
+import {
+  renameFile
+} from './dialogs';
+
+import {
+  FileBrowserModel
+} from './model';
 
 import * as utils
   from './utils';
@@ -163,9 +177,14 @@ const RENAME_DURATION = 500;
 const DRAG_THRESHOLD = 5;
 
 /**
+ * A boolean indicating whether the platform is Mac.
+ */
+const IS_MAC = !!navigator.platform.match(/Mac/i);
+
+/**
  * The factory MIME type supported by phosphor dock panels.
  */
-const FACTORY_MIME = 'application/x-phosphor-widget-factory';
+const FACTORY_MIME = 'application/vnd.phosphor.widget-factory';
 
 
 /**
@@ -174,27 +193,14 @@ const FACTORY_MIME = 'application/x-phosphor-widget-factory';
 export
 class DirListing extends Widget {
   /**
-   * Create the DOM node for a dir listing.
-   */
-  static createNode(): HTMLElement {
-    let node = document.createElement('div');
-    let header = document.createElement('div');
-    let content = document.createElement('ul');
-    content.className = CONTENT_CLASS;
-    header.className = HEADER_CLASS;
-    node.appendChild(header);
-    node.appendChild(content);
-    node.tabIndex = 1;
-    return node;
-  }
-
-  /**
    * Construct a new file browser directory listing widget.
    *
    * @param model - The file browser view model.
    */
   constructor(options: DirListing.IOptions) {
-    super();
+    super({
+      node: (options.renderer || DirListing.defaultRenderer).createNode()
+    });
     this.addClass(DIR_LISTING_CLASS);
     this._model = options.model;
     this._model.refreshed.connect(this._onModelRefreshed, this);
@@ -354,17 +360,13 @@ class DirListing extends Widget {
    */
   delete(): Promise<void> {
     let names: string[] = [];
-    if (this._softSelection) {
-      names.push(this._softSelection);
-    } else {
-      let items = this._model.items;
-      for (let item of items) {
-        if (this._selection[item.name]) {
-          names.push(item.name);
-        }
+    let items = this._model.items;
+    for (let item of items) {
+      if (this._selection[item.name]) {
+        names.push(item.name);
       }
     }
-    let message = `Permanantly delete these ${names.length} files?`;
+    let message = `Permanently delete these ${names.length} files?`;
     if (names.length === 1) {
       message = `Permanently delete file "${names[0]}"?`;
     }
@@ -401,12 +403,10 @@ class DirListing extends Widget {
   /**
    * Download the currently selected item(s).
    */
-  download(): Promise<IContents.IModel> {
+  download(): void {
     for (let item of this._getSelectedItems()) {
       if (item.type !== 'directory') {
-        return this._model.download(item.path).catch(error =>
-          utils.showErrorMessage(this, 'Download file', error)
-        );
+        this._model.download(item.path)
       }
     }
   }
@@ -420,9 +420,7 @@ class DirListing extends Widget {
     let paths = items.map(item => item.path);
     for (let session of this._model.sessions) {
       let index = paths.indexOf(session.notebook.path);
-      if (!this._softSelection && this._selection[items[index].name]) {
-        promises.push(this._model.shutdown(session.id));
-      } else if (this._softSelection === items[index].name) {
+      if (this._selection[items[index].name]) {
         promises.push(this._model.shutdown(session.id));
       }
     }
@@ -444,7 +442,7 @@ class DirListing extends Widget {
     if (selected.length === 1 || keepExisting) {
       // Select the next item.
       let name = selected[selected.length - 1];
-      index = arrays.findIndex(items, (value) => value.name === name);
+      index = findIndex(items, value => value.name === name);
       index += 1;
       if (index === this._items.length) {
         index = 0;
@@ -455,7 +453,7 @@ class DirListing extends Widget {
     } else {
       // Select the last selected item.
       let name = selected[selected.length - 1];
-      index = arrays.findIndex(items, (value) => value.name === name);
+      index = findIndex(items, value => value.name === name);
     }
     if (index !== -1) {
       this._selectItem(index, keepExisting);
@@ -474,7 +472,7 @@ class DirListing extends Widget {
     if (selected.length === 1 || keepExisting) {
       // Select the previous item.
       let name = selected[0];
-      index = arrays.findIndex(items, (value) => value.name === name);
+      index = findIndex(items, value => value.name === name);
       index -= 1;
       if (index === -1) {
         index = this._items.length - 1;
@@ -485,7 +483,7 @@ class DirListing extends Widget {
     } else {
       // Select the first selected item.
       let name = selected[0];
-      index = arrays.findIndex(items, (value) => value.name === name);
+      index = findIndex(items, value => value.name === name);
     }
     if (index !== -1) {
       this._selectItem(index, keepExisting);
@@ -496,9 +494,6 @@ class DirListing extends Widget {
    * Get whether an item is selected by name.
    */
   isSelected(name: string): boolean {
-    if (this._softSelection) {
-      return name === this._softSelection;
-    }
     return this._selection[name] === true;
   }
 
@@ -543,6 +538,9 @@ class DirListing extends Widget {
     case 'dblclick':
       this._evtDblClick(event as MouseEvent);
       break;
+    case 'contextmenu':
+      this._evtContextMenu(event as MouseEvent);
+      break;
     case 'scroll':
       this._evtScroll(event as MouseEvent);
       break;
@@ -558,6 +556,8 @@ class DirListing extends Widget {
     case 'p-drop':
       this._evtDrop(event as IDragEvent);
       break;
+    default:
+      break;
     }
   }
 
@@ -572,6 +572,7 @@ class DirListing extends Widget {
     node.addEventListener('keydown', this);
     node.addEventListener('click', this);
     node.addEventListener('dblclick', this);
+    node.addEventListener('contextmenu', this);
     content.addEventListener('scroll', this);
     content.addEventListener('p-dragenter', this);
     content.addEventListener('p-dragleave', this);
@@ -590,6 +591,7 @@ class DirListing extends Widget {
     node.removeEventListener('keydown', this);
     node.removeEventListener('click', this);
     node.removeEventListener('dblclick', this);
+    node.removeEventListener('contextmenu', this);
     content.removeEventListener('scroll', this);
     content.removeEventListener('p-dragenter', this);
     content.removeEventListener('p-dragleave', this);
@@ -670,7 +672,6 @@ class DirListing extends Widget {
    * Handle the `'click'` event for the widget.
    */
   private _evtClick(event: MouseEvent) {
-    this._softSelection = '';
     let target = event.target as HTMLElement;
 
     let header = this.headerNode;
@@ -681,17 +682,6 @@ class DirListing extends Widget {
       }
       return;
     }
-
-    // Bail if editing.
-    if (this._editNode.contains(target)) {
-      return;
-    }
-
-    let content = this.contentNode;
-    if (content.contains(target)) {
-      this._handleFileSelect(event);
-    }
-
   }
 
   /**
@@ -699,6 +689,13 @@ class DirListing extends Widget {
    */
   private _evtScroll(event: MouseEvent): void {
     this.headerNode.scrollLeft = this.contentNode.scrollLeft;
+  }
+
+  /**
+   * Handle the `'contextmenu'` event for the widget.
+   */
+  private _evtContextMenu(event: MouseEvent): void {
+    this._inContext = true;
   }
 
   /**
@@ -721,16 +718,19 @@ class DirListing extends Widget {
       }
     }
 
+    // Check for clearing a context menu.
+    let newContext = (IS_MAC && event.ctrlKey) || (event.button === 2);
+    if (this._inContext && !newContext) {
+      this._inContext = false;
+      return;
+    }
+    this._inContext = false;
+
     let index = utils.hitTestNodes(this._items, event.clientX, event.clientY);
     if (index === -1) {
       return;
     }
-    this._softSelection = '';
-    let items = this.sortedItems;
-    let selected = Object.keys(this._selection);
-    if (selected.indexOf(items[index].name) === -1) {
-      this._softSelection = items[index].name;
-    }
+    this._handleFileSelect(event);
 
     // Left mouse press for drag start.
     if (event.button === 0) {
@@ -749,6 +749,18 @@ class DirListing extends Widget {
    * Handle the `'mouseup'` event for the widget.
    */
   private _evtMouseup(event: MouseEvent): void {
+    // Handle any soft selection from the previous mouse down.
+    if (this._softSelection) {
+      let altered = event.metaKey || event.shiftKey || event.ctrlKey;
+      // See if we need to clear the other selection.
+      if (!altered && event.button === 0) {
+        this._selection = Object.create(null);
+        this._selection[this._softSelection] = true;
+        this.update();
+      }
+      this._softSelection = '';
+    }
+    // Remove the drag listeners if necessary.
     if (event.button !== 0 || !this._drag) {
       document.removeEventListener('mousemove', this, true);
       document.removeEventListener('mouseup', this, true);
@@ -796,6 +808,8 @@ class DirListing extends Widget {
       event.stopPropagation();
       event.preventDefault();
       break;
+    default:
+      break;
     }
   }
 
@@ -826,7 +840,7 @@ class DirListing extends Widget {
 
     // Find a valid double click target.
     let target = event.target as HTMLElement;
-    let i = arrays.findIndex(this._items, node => node.contains(target));
+    let i = findIndex(this._items, node => node.contains(target));
     if (i === -1) {
       return;
     }
@@ -861,13 +875,10 @@ class DirListing extends Widget {
         return;
       }
       let item = this.sortedItems[index];
-      let target = this._items[index];
-      if (!target.classList.contains(FOLDER_TYPE_CLASS)) {
+      if (item.type !== 'directory' || this._selection[item.name]) {
         return;
       }
-      if (!this._softSelection && this._selection[item.name]) {
-        return;
-      }
+      let target = event.target as HTMLElement;
       target.classList.add(utils.DROP_TARGET_CLASS);
       event.preventDefault();
       event.stopPropagation();
@@ -908,8 +919,8 @@ class DirListing extends Widget {
     event.preventDefault();
     event.stopPropagation();
     clearTimeout(this._selectTimer);
-    if (event.proposedAction === DropAction.None) {
-      event.dropAction = DropAction.None;
+    if (event.proposedAction === 'none') {
+      event.dropAction = 'none';
       return;
     }
     if (!event.mimeData.hasData(utils.CONTENTS_MIME)) {
@@ -936,25 +947,7 @@ class DirListing extends Widget {
     let names = event.mimeData.getData(utils.CONTENTS_MIME) as string[];
     for (let name of names) {
       let newPath = path + name;
-      promises.push(this._model.rename(name, newPath).catch(error => {
-        if (error.xhr) {
-          error.message = `${error.xhr.statusText} ${error.xhr.status}`;
-        }
-        if (error.message.indexOf('409') !== -1) {
-          let options = {
-            title: 'Overwrite file?',
-            body: `"${newPath}" already exists, overwrite?`,
-            okText: 'OVERWRITE'
-          };
-          return showDialog(options).then(button => {
-            if (button.text === 'OVERWRITE') {
-              return this._model.deleteFile(newPath).then(() => {
-                return this._model.rename(name, newPath);
-              });
-            }
-          });
-        }
-      }));
+      promises.push(renameFile(this._model, name, newPath));
     }
     Promise.all(promises).then(
       () => this._model.refresh(),
@@ -978,7 +971,7 @@ class DirListing extends Widget {
       selectedNames = [item.name];
     } else if (selectedNames.length === 1) {
       let name = selectedNames[0];
-      item = arrays.find(items, (value) => value.name === name);
+      item = find(items, value => value.name === name);
     }
 
     // Create the drag image.
@@ -988,8 +981,8 @@ class DirListing extends Widget {
     this._drag = new Drag({
       dragImage,
       mimeData: new MimeData(),
-      supportedActions: DropActions.Move,
-      proposedAction: DropAction.Move
+      supportedActions: 'move',
+      proposedAction: 'move'
     });
     this._drag.mimeData.setData(utils.CONTENTS_MIME, selectedNames);
     if (item && item.type !== 'directory') {
@@ -1002,6 +995,7 @@ class DirListing extends Widget {
           context.populated.connect(() => model.refresh() );
           context.kernelChanged.connect(() => model.refresh() );
         }
+        this._opener.open(widget);
         return widget;
       });
     }
@@ -1009,6 +1003,7 @@ class DirListing extends Widget {
     // Start the drag and remove the mousemove and mouseup listeners.
     document.removeEventListener('mousemove', this, true);
     document.removeEventListener('mouseup', this, true);
+    clearTimeout(this._selectTimer);
     this._drag.start(clientX, clientY).then(action => {
       this._drag = null;
       clearTimeout(this._selectTimer);
@@ -1029,11 +1024,14 @@ class DirListing extends Widget {
       return;
     }
 
+    // Clear any existing soft selection.
+    this._softSelection = '';
+
     let name = items[index].name;
     let selected = Object.keys(this._selection);
 
     // Handle toggling.
-    if (event.metaKey || event.ctrlKey) {
+    if ((IS_MAC && event.metaKey) || (!IS_MAC && event.ctrlKey)) {
       if (this._selection[name]) {
         delete this._selection[name];
       } else {
@@ -1043,6 +1041,10 @@ class DirListing extends Widget {
     // Handle multiple select.
     } else if (event.shiftKey) {
       this._handleMultiSelect(selected, index);
+
+    // Handle a 'soft' selection
+    } else if (name in this._selection && selected.length > 1) {
+      this._softSelection = name;
 
     // Default to selecting the only the item.
     } else {
@@ -1054,6 +1056,7 @@ class DirListing extends Widget {
           }
         }, RENAME_DURATION);
       }
+      // Select only the given item.
       this._selection = Object.create(null);
       this._selection[name] = true;
     }
@@ -1103,10 +1106,7 @@ class DirListing extends Widget {
    */
   private _getSelectedItems(): IContents.IModel[] {
     let items = this.sortedItems;
-    if (!this._softSelection) {
-      return items.filter(item => this._selection[item.name]);
-    }
-    return items.filter(item => item.name === this._softSelection);
+    return items.filter(item => this._selection[item.name]);
   }
 
   /**
@@ -1142,8 +1142,8 @@ class DirListing extends Widget {
    */
   private _doRename(): Promise<string> {
     let items = this.sortedItems;
-    let name = this._softSelection || Object.keys(this._selection)[0];
-    let index = arrays.findIndex(items, (value) => value.name === name);
+    let name = Object.keys(this._selection)[0];
+    let index = findIndex(items, value => value.name === name);
     let row = this._items[index];
     let item = items[index];
     let nameNode = this.renderer.getNameNode(row);
@@ -1154,28 +1154,7 @@ class DirListing extends Widget {
       if (newName === original) {
         return;
       }
-      return this._model.rename(original, newName).catch(error => {
-        if (error.xhr) {
-          error.message = `${error.xhr.status}: error.statusText`;
-        }
-        if (error.message.indexOf('409') !== -1 ||
-            error.message.indexOf('already exists') !== -1) {
-          let options = {
-            title: 'Overwrite file?',
-            body: `"${newName}" already exists, overwrite?`,
-            okText: 'OVERWRITE'
-          };
-          return showDialog(options).then(button => {
-            if (button.text === 'OVERWRITE') {
-              return this._model.deleteFile(newName).then(() => {
-                return this._model.rename(original, newName).then(() => {
-                  this._model.refresh();
-                });
-              });
-            }
-          });
-        }
-      }).catch(error => {
+      return renameFile(this._model, original, newName).catch(error => {
         utils.showErrorMessage(this, 'Rename Error', error);
         return original;
       }).then(() => {
@@ -1196,7 +1175,7 @@ class DirListing extends Widget {
     }
     let name = items[index].name;
     this._selection[name] = true;
-    Private.scrollIfNeeded(this.contentNode, this._items[index]);
+    scrollIntoViewIfNeeded(this.contentNode, this._items[index]);
     this._isCut = false;
   }
 
@@ -1239,9 +1218,10 @@ class DirListing extends Widget {
   private _isCut = false;
   private _prevPath = '';
   private _clipboard: string[] = [];
-  private _softSelection = '';
   private _manager: DocumentManager = null;
   private _opener: IWidgetOpener = null;
+  private _softSelection = '';
+  private _inContext = false;
   private _selection: { [key: string]: boolean; } = Object.create(null);
   private _renderer: DirListing.IRenderer = null;
 }
@@ -1302,6 +1282,11 @@ namespace DirListing {
   export
   interface IRenderer {
     /**
+     * Create the DOM node for a dir listing.
+     */
+    createNode(): HTMLElement;
+
+    /**
      * Populate and empty header node for a dir listing.
      *
      * @param node - The header node to populate.
@@ -1361,6 +1346,21 @@ namespace DirListing {
    */
   export
   class Renderer implements IRenderer {
+    /**
+     * Create the DOM node for a dir listing.
+     */
+    createNode(): HTMLElement {
+      let node = document.createElement('div');
+      let header = document.createElement('div');
+      let content = document.createElement('ul');
+      content.className = CONTENT_CLASS;
+      header.className = HEADER_CLASS;
+      node.appendChild(header);
+      node.appendChild(content);
+      node.tabIndex = 1;
+      return node;
+    }
+
     /**
      * Populate and empty header node for a dir listing.
      *
@@ -1473,9 +1473,8 @@ namespace DirListing {
       let modText = '';
       let modTitle = '';
       if (model.last_modified) {
-        let time = moment(model.last_modified).fromNow();
-        modText = time === 'a few seconds ago' ? 'seconds ago' : time;
-        modTitle = moment(model.last_modified).format('YYYY-MM-DD HH:mm');
+        modText = humanTime(model.last_modified);
+        modTitle = dateTime(model.last_modified);
       }
 
       text.textContent = model.name;
@@ -1508,8 +1507,10 @@ namespace DirListing {
       let modified = utils.findElement(dragImage, ITEM_MODIFIED_CLASS);
       dragImage.removeChild(modified as HTMLElement);
       if (count > 1) {
-        let nameNode = utils.findElement(node, ITEM_TEXT_CLASS);
+        let nameNode = utils.findElement(dragImage, ITEM_TEXT_CLASS);
         nameNode.textContent = '(' + count + ')';
+        let iconNode = utils.findElement(dragImage, ITEM_ICON_CLASS);
+        iconNode.className = `${ITEM_ICON_CLASS} ${FILE_TYPE_CLASS}`;
       }
       return dragImage;
     }
@@ -1603,23 +1604,5 @@ namespace Private {
       output.reverse();
     }
     return output;
-  }
-
-  /**
-   * Scroll an element into view if needed.
-   *
-   * @param area - The scroll area element.
-   *
-   * @param elem - The element of interest.
-   */
-  export
-  function scrollIfNeeded(area: HTMLElement, elem: HTMLElement): void {
-    let ar = area.getBoundingClientRect();
-    let er = elem.getBoundingClientRect();
-    if (er.top < ar.top) {
-      area.scrollTop -= ar.top - er.top;
-    } else if (er.bottom > ar.bottom) {
-      area.scrollTop += er.bottom - ar.bottom;
-    }
   }
 }

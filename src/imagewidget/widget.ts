@@ -7,11 +7,11 @@ import {
 
 import {
   Message
-} from 'phosphor-messaging';
+} from 'phosphor/lib/core/messaging';
 
 import {
   Widget
-} from 'phosphor-widget';
+} from 'phosphor/lib/ui/widget';
 
 import {
   ABCWidgetFactory, IDocumentModel, IDocumentContext
@@ -29,22 +29,10 @@ const IMAGE_CLASS = 'jp-ImageWidget';
 export
 class ImageWidget extends Widget {
   /**
-   * Create the node for the image widget.
-   */
-  static createNode(): HTMLElement {
-    let node = document.createElement('div');
-    let innerNode = document.createElement('div');
-    let image = document.createElement('img');
-    node.appendChild(innerNode);
-    innerNode.appendChild(image);
-    return node;
-  }
-
-  /**
    * Construct a new image widget.
    */
   constructor(context: IDocumentContext<IDocumentModel>) {
-    super();
+    super({ node: Private.createNode() });
     this._context = context;
     this.node.tabIndex = -1;
     this.addClass(IMAGE_CLASS);
@@ -52,15 +40,9 @@ class ImageWidget extends Widget {
     if (context.model.toString()) {
       this.update();
     }
-    context.pathChanged.connect(() => {
-      this.update();
-    });
-    context.model.contentChanged.connect(() => {
-      this.update();
-    });
-    context.contentsModelChanged.connect(() => {
-      this.update();
-    });
+    context.pathChanged.connect(() => this.update());
+    context.model.contentChanged.connect(() => this.update());
+    context.contentsModelChanged.connect(() => this.update());
   }
 
   /**
@@ -76,12 +58,7 @@ class ImageWidget extends Widget {
     this._scale = value;
     let scaleNode = this.node.querySelector('div') as HTMLElement;
     let transform: string;
-    let percentage = ((value - 1) / 2) * 100 / value;
-    if (value > 1) {
-      transform = `scale(${value}) translate(${percentage}%, ${percentage}%)`;
-    } else {
-      transform = `scale(${value}) translateY(${percentage}%)`;
-    }
+    transform = `scale(${value})`;
     scaleNode.style.transform = transform;
     this.update();
   }
@@ -101,7 +78,7 @@ class ImageWidget extends Widget {
    * Handle `update-request` messages for the widget.
    */
   protected onUpdateRequest(msg: Message): void {
-    this.title.text = this._context.path.split('/').pop();
+    this.title.label = this._context.path.split('/').pop();
     let cm = this._context.contentsModel;
     if (cm === null) {
       return;
@@ -109,6 +86,13 @@ class ImageWidget extends Widget {
     let content = this._context.model.toString();
     let src = `data:${cm.mimetype};${cm.format},${content}`;
     this.node.querySelector('img').setAttribute('src', src);
+  }
+
+  /**
+   * Handle `'activate-request'` messages.
+   */
+  protected onActivateRequest(msg: Message): void {
+    this.node.focus();
   }
 
   private _context: IDocumentContext<IDocumentModel>;
@@ -128,5 +112,23 @@ class ImageWidgetFactory extends ABCWidgetFactory<ImageWidget, IDocumentModel> {
     let widget = new ImageWidget(context);
     this.widgetCreated.emit(widget);
     return widget;
+  }
+}
+
+/**
+ * A namespace for image widget private data.
+ */
+namespace Private {
+  /**
+   * Create the node for the image widget.
+   */
+  export
+  function createNode(): HTMLElement {
+    let node = document.createElement('div');
+    let innerNode = document.createElement('div');
+    let image = document.createElement('img');
+    node.appendChild(innerNode);
+    innerNode.appendChild(image);
+    return node;
   }
 }
