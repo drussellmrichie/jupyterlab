@@ -2,8 +2,8 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  getBaseUrl
-} from 'jupyter-js-services/lib/utils';
+  utils
+} from '@jupyterlab/services';
 
 import {
   Menu
@@ -148,7 +148,7 @@ function activateHelpHandler(app: JupyterLab, mainMenu: IMainMenu, palette: ICom
   app.commands.addCommand(openClassicNotebookId, {
     label: 'Open Classic Notebook',
     execute: () => {
-      window.open(getBaseUrl()+'tree');
+      window.open(utils.getBaseUrl() + 'tree');
     }
   });
   palette.addItem({ command: openClassicNotebookId, category: 'Help'});
@@ -172,11 +172,15 @@ namespace Private {
     let { commands, keymap } = app;
     let menu = new Menu({ commands, keymap });
     menu.title.label = 'Help';
+
     menu.addItem({ command: 'about-jupyterlab:show' });
     menu.addItem({ command: 'faq-jupyterlab:show' });
-    menu.addItem({ command: 'classic-notebook:open'})
+    menu.addItem({ command: 'classic-notebook:open' });
 
     COMMANDS.forEach(item => menu.addItem({ command: item.id }));
+
+    menu.addItem({ command: 'statedb:clear' });
+
     return menu;
   }
 

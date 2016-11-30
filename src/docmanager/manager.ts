@@ -2,11 +2,11 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  ContentsManager, IKernel, IServiceManager, ISession
-} from 'jupyter-js-services';
+  ContentsManager, Kernel, ServiceManager
+} from '@jupyterlab/services';
 
 import {
-  each
+  each, toArray
 } from 'phosphor/lib/algorithm/iteration';
 
 import {
@@ -22,26 +22,43 @@ import {
 } from 'phosphor/lib/core/disposable';
 
 import {
+  AttachedProperty
+} from 'phosphor/lib/core/properties';
+
+import {
+  Token
+} from 'phosphor/lib/core/token';
+
+import {
   Widget
 } from 'phosphor/lib/ui/widget';
 
 import {
-  IDocumentRegistry, IWidgetFactory, IWidgetFactoryOptions,
-  IDocumentModel, IDocumentContext, IModelFactory
+  DocumentRegistry, Context
 } from '../docregistry';
 
 import {
-  IWidgetOpener
-} from '../filebrowser';
-
-import {
-  Context
-} from './context';
+  SaveHandler
+} from './savehandler';
 
 import {
   DocumentWidgetManager
 } from './widgetmanager';
 
+/* tslint:disable */
+/**
+ * The document registry token.
+ */
+export
+const IDocumentManager = new Token<IDocumentManager>('jupyter.services.document-manager');
+/* tslint:enable */
+
+
+/**
+ * The interface for a document manager.
+ */
+export
+interface IDocumentManager extends DocumentManager {}
 
 /**
  * The document manager.
@@ -68,23 +85,17 @@ class DocumentManager implements IDisposable {
   }
 
   /**
-   * Get the kernel spec models for the manager.
-   *
-   * #### Notes
-   * This is a read-only property.
+   * Get the registry used by the manager.
    */
-  get kernelspecs(): IKernel.ISpecModels {
-    return this._serviceManager.kernelspecs;
+  get registry(): DocumentRegistry {
+    return this._registry;
   }
 
   /**
-   * Get the registry used by the manager.
-   *
-   * #### Notes
-   * This is a read-only property.
+   * Get the service manager used by the manager.
    */
-  get registry(): IDocumentRegistry {
-    return this._registry;
+  get services(): ServiceManager.IManager {
+    return this._serviceManager;
   }
 
   /**
@@ -106,89 +117,71 @@ class DocumentManager implements IDisposable {
       context.dispose();
     });
     this._contexts.clear();
-    this._widgetManager.dispose();
     this._widgetManager = null;
   }
 
   /**
-   * Open a file and return the widget used to display the contents.
+   * Open a file and return the widget used to view it.
+   * Reveals an already existing editor.
    *
    * @param path - The file path to open.
    *
    * @param widgetName - The name of the widget factory to use. 'default' will use the default widget.
    *
    * @param kernel - An optional kernel name/id to override the default.
+   *
+   * @returns The created widget, or `undefined`.
+   *
+   * #### Notes
+   * This function will return `undefined` if a valid widget factory
+   * cannot be found.
    */
-  open(path: string, widgetName='default', kernel?: IKernel.IModel): Widget {
-    let registry = this._registry;
-    if (widgetName === 'default') {
-      widgetName = registry.defaultWidgetFactory(ContentsManager.extname(path));
+  openOrReveal(path: string, widgetName='default', kernel?: Kernel.IModel): Widget {
+    let widget = this.findWidget(path, widgetName);
+    if (!widget) {
+      widget = this.open(path, widgetName, kernel);
+    } else {
+      this._opener.open(widget);
     }
-    let factory = registry.getModelFactoryFor(widgetName);
-    if (!factory) {
-      return;
-    }
-    // Use an existing context if available.
-    let context = this._findContext(path, factory.name);
-    if (!context) {
-      context = this._createContext(path, factory);
-      // Load the contents from disk.
-      context.revert();
-    }
-    return this._widgetManager.createWidget(widgetName, context, kernel);
+    return widget;
   }
 
   /**
-   * Create a new file of the given name.
+   * Open a file and return the widget used to view it.
    *
-   * @param path - The file path to use.
+   * @param path - The file path to open.
    *
    * @param widgetName - The name of the widget factory to use. 'default' will use the default widget.
    *
    * @param kernel - An optional kernel name/id to override the default.
-   */
-  createNew(path: string, widgetName='default', kernel?: IKernel.IModel): Widget {
-    let registry = this._registry;
-    if (widgetName === 'default') {
-      widgetName = registry.defaultWidgetFactory(ContentsManager.extname(path));
-    }
-    let factory = registry.getModelFactoryFor(widgetName);
-    if (!factory) {
-      return;
-    }
-    let context = this._createContext(path, factory);
-    // Immediately save the contents to disk.
-    context.save();
-    return this._widgetManager.createWidget(widgetName, context, kernel);
-  }
-
-  /**
-   * List the running notebook sessions.
-   */
-  listSessions(): Promise<ISession.IModel[]> {
-    return this._serviceManager.sessions.listRunning();
-  }
-
-  /**
-   * Handle the renaming of an open document.
    *
-   * @param oldPath - The previous path.
+   * @returns The created widget, or `undefined`.
    *
-   * @param newPath - The new path.
+   * #### Notes
+   * This function will return `undefined` if a valid widget factory
+   * cannot be found.
    */
-  handleRename(oldPath: string, newPath: string): void {
-    each(this._contexts, context => {
-      if (context.path === oldPath) {
-        context.setPath(newPath);
-      }
-    });
+  open(path: string, widgetName='default', kernel?: Kernel.IModel): Widget {
+    return this._createOrOpenDocument('open', path, widgetName, kernel);
   }
 
   /**
-   * Handle a file deletion.
+   * Create a new file and return the widget used to view it.
+   *
+   * @param path - The file path to create.
+   *
+   * @param widgetName - The name of the widget factory to use. 'default' will use the default widget.
+   *
+   * @param kernel - An optional kernel name/id to override the default.
+   *
+   * @returns The created widget, or `undefined`.
+   *
+   * #### Notes
+   * This function will return `undefined` if a valid widget factory
+   * cannot be found.
    */
-  handleDelete(path: string): void {
-    // TODO: Leave all of the widgets open and flag them as orphaned?
+  createNew(path: string, widgetName='default', kernel?: Kernel.IModel): Widget {
+    return this._createOrOpenDocument('create', path, widgetName, kernel);
   }
 
   /**
@@ -198,13 +191,19 @@ class DocumentManager implements IDisposable {
    *
    * @param widgetName - The name of the widget factory to use. 'default' will use the default widget.
    *
+   * @returns The found widget, or `undefined`.
+   *
    * #### Notes
    * This can be used to use an existing widget instead of opening
    * a new widget.
    */
   findWidget(path: string, widgetName='default'): Widget {
     if (widgetName === 'default') {
-      widgetName = this._registry.defaultWidgetFactory(ContentsManager.extname(path));
+      let factory = this._registry.defaultWidgetFactory(ContentsManager.extname(path));
+      if (!factory) {
+        return;
+      }
+      widgetName = factory.name;
     }
     let context = this._contextForPath(path);
     if (context) {
@@ -214,43 +213,55 @@ class DocumentManager implements IDisposable {
 
   /**
    * Get the document context for a widget.
+   *
+   * @param widget - The widget of interest.
+   *
+   * @returns The context associated with the widget, or `undefined`.
    */
-  contextForWidget(widget: Widget): IDocumentContext<IDocumentModel> {
+  contextForWidget(widget: Widget): DocumentRegistry.Context {
     return this._widgetManager.contextForWidget(widget);
   }
 
   /**
    * Clone a widget.
    *
+   * @param widget - The source widget.
+   *
+   * @returns A new widget or `undefined`.
+   *
    * #### Notes
-   * This will create a new widget with the same model and context
-   * as this widget.
+   *  Uses the same widget factory and context as the source, or returns
+   *  `undefined` if the source widget is not managed by this manager.
    */
-  clone(widget: Widget): Widget {
-    return this._widgetManager.clone(widget);
+  cloneWidget(widget: Widget): Widget {
+    return this._widgetManager.cloneWidget(widget);
   }
 
   /**
    * Close the widgets associated with a given path.
+   *
+   * @param path - The target path.
    */
   closeFile(path: string): void {
     let context = this._contextForPath(path);
-    this._widgetManager.close(context);
+    if (context) {
+      this._widgetManager.closeWidgets(context);
+    }
   }
 
   /**
    * Close all of the open documents.
    */
   closeAll(): void {
-    each(this._contexts, context => {
-      this._widgetManager.close(context);
+    each(toArray(this._contexts), context => {
+      this._widgetManager.closeWidgets(context);
     });
   }
 
   /**
    * Find a context for a given path and factory name.
    */
-  private _findContext(path: string, factoryName: string): Context<IDocumentModel> {
+  private _findContext(path: string, factoryName: string): Private.IContext {
     return find(this._contexts, context => {
       return (context.factoryName === factoryName &&
               context.path === path);
@@ -260,7 +271,7 @@ class DocumentManager implements IDisposable {
   /**
    * Get a context for a given path.
    */
-  private _contextForPath(path: string): Context<IDocumentModel> {
+  private _contextForPath(path: string): Private.IContext {
     return find(this._contexts, context => {
       return context.path === path;
     });
@@ -269,7 +280,7 @@ class DocumentManager implements IDisposable {
   /**
    * Create a context from a path and a model factory.
    */
-  private _createContext(path: string, factory: IModelFactory<IDocumentModel>): Context<IDocumentModel> {
+  private _createContext(path: string, factory: DocumentRegistry.ModelFactory): Private.IContext {
     let adopter = (widget: Widget) => {
       this._widgetManager.adoptWidget(context, widget);
       this._opener.open(widget);
@@ -280,6 +291,14 @@ class DocumentManager implements IDisposable {
       factory,
       path
     });
+    let handler = new SaveHandler({
+      context,
+      manager: this._serviceManager
+    });
+    Private.saveHandlerProperty.set(context, handler);
+    context.ready.then(() => {
+      handler.start();
+    });
     context.disposed.connect(() => {
       this._contexts.remove(context);
     });
@@ -287,11 +306,77 @@ class DocumentManager implements IDisposable {
     return context;
   }
 
-  private _serviceManager: IServiceManager = null;
+  /**
+   * Get the model factory for a given widget name.
+   */
+  private _widgetFactoryFor(path: string, widgetName: string): DocumentRegistry.WidgetFactory {
+    let registry = this._registry;
+    if (widgetName === 'default') {
+      let factory = registry.defaultWidgetFactory(ContentsManager.extname(path));
+      if (!factory) {
+        return;
+      }
+      widgetName = factory.name;
+    }
+    return registry.getWidgetFactory(widgetName);
+  }
+
+  /**
+   * Creates a new document, or loads one from disk, depending on the `which` argument.
+   * If `which==='create'`, then it creates a new document. If `which==='open'`,
+   * then it loads the document from disk.
+   *
+   * The two cases differ in how the document context is handled, but the creation
+   * of the widget and launching of the kernel are identical.
+   */
+  private _createOrOpenDocument(which: 'open'|'create', path: string, widgetName='default', kernel?: Kernel.IModel): Widget {
+    let widgetFactory = this._widgetFactoryFor(path, widgetName);
+    if (!widgetFactory) {
+      return;
+    }
+    let factory = this._registry.getModelFactory(widgetFactory.modelName);
+    if (!factory) {
+      return;
+    }
+
+    let context: Private.IContext = null;
+
+    // Handle the load-from-disk case
+    if (which === 'open') {
+      // Use an existing context if available.
+      context = this._findContext(path, factory.name);
+      if (!context) {
+        context = this._createContext(path, factory);
+        // Load the contents from disk.
+        context.revert();
+      }
+    } else if (which === 'create') {
+      context = this._createContext(path, factory);
+      // Immediately save the contents to disk.
+      context.save();
+    }
+
+    // Maybe launch/connect the kernel for the context.
+    if (kernel && (kernel.id || kernel.name) && widgetFactory.canStartKernel) {
+      // If the kernel is valid and the widgetFactory wants one.
+      context.changeKernel(kernel);
+    } else if (widgetFactory.preferKernel &&
+               !(kernel && !kernel.id && !kernel.name) &&
+               !context.kernel) {
+      // If the kernel is not the `None` kernel and the widgetFactory wants one
+      context.startDefaultKernel();
+    }
+
+    let widget = this._widgetManager.createWidget(widgetFactory.name, context);
+    this._opener.open(widget);
+    return widget;
+  }
+
+  private _serviceManager: ServiceManager.IManager = null;
   private _widgetManager: DocumentWidgetManager = null;
-  private _registry: IDocumentRegistry = null;
-  private _contexts: Vector<Context<IDocumentModel>> = new Vector<Context<IDocumentModel>>();
-  private _opener: IWidgetOpener = null;
+  private _registry: DocumentRegistry = null;
+  private _contexts: Vector<Private.IContext> = new Vector<Private.IContext>();
+  private _opener: DocumentManager.IWidgetOpener = null;
 }
 
 
@@ -308,30 +393,47 @@ namespace DocumentManager {
     /**
      * A document registry instance.
      */
-    registry: IDocumentRegistry;
+    registry: DocumentRegistry;
 
     /**
      * A service manager instance.
      */
-    manager: IServiceManager;
+    manager: ServiceManager.IManager;
 
     /**
      * A widget opener for sibling widgets.
      */
     opener: IWidgetOpener;
   }
+
+  /**
+   * An interface for a widget opener.
+   */
+  export
+  interface IWidgetOpener {
+    /**
+     * Open the given widget.
+     */
+    open(widget: Widget): void;
+  }
 }
 
 
 /**
- * A private namespace for DocumentManager data.
+ * A namespace for private data.
  */
 namespace Private {
   /**
-   * An extended interface for a widget factory and its options.
+   * An attached property for a context save handler.
    */
   export
-  interface IWidgetFactoryEx extends IWidgetFactoryOptions {
-    factory: IWidgetFactory<Widget, IDocumentModel>;
-  }
+  const saveHandlerProperty = new AttachedProperty<DocumentRegistry.Context, SaveHandler>({
+    name: 'saveHandler'
+  });
+
+  /**
+   * A type alias for a standard context.
+   */
+  export
+  interface IContext extends Context<DocumentRegistry.IModel> {};
 }

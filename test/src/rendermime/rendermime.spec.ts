@@ -4,12 +4,19 @@
 import expect = require('expect.js');
 
 import {
+  toArray
+} from 'phosphor/lib/algorithm/iteration';
+
+import {
+  JSONObject
+} from 'phosphor/lib/algorithm/json';
+
+import {
   Widget
 } from 'phosphor/lib/ui/widget';
 
 import {
-  LatexRenderer, PDFRenderer, JavascriptRenderer,
-  SVGRenderer, MarkdownRenderer, TextRenderer, HTMLRenderer, ImageRenderer
+   TextRenderer
 } from '../../../lib/renderers';
 
 import {
@@ -17,35 +24,8 @@ import {
 } from '../../../lib/rendermime';
 
 import {
-  defaultSanitizer
-} from '../../../lib/sanitizer';
-
-
-const TRANSFORMERS = [
-  new JavascriptRenderer(),
-  new MarkdownRenderer(),
-  new HTMLRenderer(),
-  new PDFRenderer(),
-  new ImageRenderer(),
-  new SVGRenderer(),
-  new LatexRenderer(),
-  new TextRenderer()
-];
-
-
-export
-function defaultRenderMime(): RenderMime {
-  let renderers: RenderMime.MimeMap<RenderMime.IRenderer> = {};
-  let order: string[] = [];
-  for (let t of TRANSFORMERS) {
-    for (let m of t.mimetypes) {
-      renderers[m] = t;
-      order.push(m);
-    }
-  }
-  let sanitizer = defaultSanitizer;
-  return new RenderMime({ renderers, order, sanitizer });
-}
+  defaultRenderMime
+} from '../utils';
 
 
 describe('rendermime/index', () => {
@@ -118,14 +98,32 @@ describe('rendermime/index', () => {
         expect(widget.node.innerHTML).to.be('<h1>foo </h1>');
       });
 
-      it('should sanitize svg', () => {
-        let bundle: RenderMime.MimeMap<string> = {
-          'image/svg+xml': '<svg><script>windox.x=1</script></svg>'
+      it('should render json data', () => {
+        let bundle: RenderMime.MimeMap<JSONObject> = {
+          'application/json': { 'foo': 1 }
         };
         let r = defaultRenderMime();
         let widget = r.render({ bundle });
-        expect(widget.node.innerHTML.indexOf('svg')).to.not.be(-1);
-        expect(widget.node.innerHTML.indexOf('script')).to.be(-1);
+        expect(widget.node.textContent).to.be('{\n  "foo": 1\n}');
+      });
+
+      it('should accept an injector', () => {
+        let called = 0;
+        let injector = (mimetype: string, value: string | JSONObject) => {
+          if (mimetype === 'text/plain') {
+            expect(value as string).to.be('foo');
+            called++;
+          } else if (mimetype === 'application/json') {
+            expect((value as JSONObject)['foo']).to.be(1);
+            called++;
+          }
+        };
+        let bundle: RenderMime.MimeMap<string> = {
+          'foo/bar': '1'
+        };
+        let r = defaultRenderMime();
+        r.render({ bundle, injector });
+        expect(called).to.be(2);
       });
 
     });
@@ -171,7 +169,7 @@ describe('rendermime/index', () => {
       it('should clone the rendermime instance with shallow copies of data', () => {
         let r = defaultRenderMime();
         let c = r.clone();
-        expect(c.order).to.eql(r.order);
+        expect(toArray(c.mimetypes())).to.eql(toArray(r.mimetypes()));
         let t = new TextRenderer();
         c.addRenderer('text/foo', t);
         expect(r).to.not.be(c);
@@ -185,18 +183,18 @@ describe('rendermime/index', () => {
         let r = defaultRenderMime();
         let t = new TextRenderer();
         r.addRenderer('text/foo', t);
-        let index = r.order.indexOf('text/foo');
+        let index = toArray(r.mimetypes()).indexOf('text/foo');
         expect(index).to.be(0);
       });
 
       it('should take an optional order index', () => {
         let r = defaultRenderMime();
         let t = new TextRenderer();
-        let len = r.order.length;
+        let len = toArray(r.mimetypes()).length;
         r.addRenderer('text/foo', t, 0);
-        let index = r.order.indexOf('text/foo');
+        let index = toArray(r.mimetypes()).indexOf('text/foo');
         expect(index).to.be(0);
-        expect(r.order.length).to.be(len + 1);
+        expect(toArray(r.mimetypes()).length).to.be(len + 1);
       });
 
     });
@@ -219,18 +217,11 @@ describe('rendermime/index', () => {
 
     });
 
-    describe('#order', () => {
+    describe('#mimetypes()', () => {
 
       it('should get the ordered list of mimetypes', () => {
         let r = defaultRenderMime();
-        expect(r.order.indexOf('text/html')).to.not.be(-1);
-      });
-
-      it('should set the ordered list of mimetypes', () => {
-        let r = defaultRenderMime();
-        let order = r.order.reverse();
-        r.order = order;
-        expect(r.order).to.eql(order);
+        expect(toArray(r.mimetypes()).indexOf('text/html')).to.not.be(-1);
       });
 
     });

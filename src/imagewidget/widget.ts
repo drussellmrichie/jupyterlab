@@ -2,10 +2,6 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IKernel
-} from 'jupyter-js-services';
-
-import {
   Message
 } from 'phosphor/lib/core/messaging';
 
@@ -14,7 +10,7 @@ import {
 } from 'phosphor/lib/ui/widget';
 
 import {
-  ABCWidgetFactory, IDocumentModel, IDocumentContext
+  ABCWidgetFactory, DocumentRegistry
 } from '../docregistry';
 
 /**
@@ -31,7 +27,7 @@ class ImageWidget extends Widget {
   /**
    * Construct a new image widget.
    */
-  constructor(context: IDocumentContext<IDocumentModel>) {
+  constructor(context: DocumentRegistry.Context) {
     super({ node: Private.createNode() });
     this._context = context;
     this.node.tabIndex = -1;
@@ -40,9 +36,16 @@ class ImageWidget extends Widget {
     if (context.model.toString()) {
       this.update();
     }
-    context.pathChanged.connect(() => this.update());
-    context.model.contentChanged.connect(() => this.update());
-    context.contentsModelChanged.connect(() => this.update());
+    context.pathChanged.connect(() => { this.update(); });
+    context.model.contentChanged.connect(() => { this.update(); });
+    context.fileChanged.connect(() => { this.update(); });
+  }
+
+  /**
+   * The image widget's context.
+   */
+  get context(): DocumentRegistry.Context {
+    return this._context;
   }
 
   /**
@@ -95,7 +98,7 @@ class ImageWidget extends Widget {
     this.node.focus();
   }
 
-  private _context: IDocumentContext<IDocumentModel>;
+  private _context: DocumentRegistry.Context;
   private _scale = 1;
 }
 
@@ -104,14 +107,12 @@ class ImageWidget extends Widget {
  * A widget factory for images.
  */
 export
-class ImageWidgetFactory extends ABCWidgetFactory<ImageWidget, IDocumentModel> {
+class ImageWidgetFactory extends ABCWidgetFactory<ImageWidget, DocumentRegistry.IModel> {
   /**
    * Create a new widget given a context.
    */
-  createNew(context: IDocumentContext<IDocumentModel>, kernel?: IKernel.IModel): ImageWidget {
-    let widget = new ImageWidget(context);
-    this.widgetCreated.emit(widget);
-    return widget;
+  protected createNewWidget(context: DocumentRegistry.IContext<DocumentRegistry.IModel>): ImageWidget {
+    return new ImageWidget(context);
   }
 }
 

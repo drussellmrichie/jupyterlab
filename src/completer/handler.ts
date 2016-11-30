@@ -2,8 +2,8 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IKernel, KernelMessage
-} from 'jupyter-js-services';
+  Kernel, KernelMessage
+} from '@jupyterlab/services';
 
 import {
   IDisposable
@@ -30,19 +30,20 @@ class CellCompleterHandler implements IDisposable {
   /**
    * Construct a new completer handler for a widget.
    */
-  constructor(completer: CompleterWidget) {
-    this._completer = completer;
+  constructor(options: CellCompleterHandler.IOptions) {
+    this._completer = options.completer;
     this._completer.selected.connect(this.onCompletionSelected, this);
     this._completer.visibilityChanged.connect(this.onVisibilityChanged, this);
+    this._kernel = options.kernel || null;
   }
 
   /**
    * The kernel used by the completer handler.
    */
-  get kernel(): IKernel {
+  get kernel(): Kernel.IKernel {
     return this._kernel;
   }
-  set kernel(value: IKernel) {
+  set kernel(value: Kernel.IKernel) {
     this._kernel = value;
   }
 
@@ -106,7 +107,7 @@ class CellCompleterHandler implements IDisposable {
     };
     let pending = ++this._pending;
 
-    return this._kernel.complete(content).then(msg => {
+    return this._kernel.requestComplete(content).then(msg => {
       this.onReply(pending, request, msg);
     });
   }
@@ -125,6 +126,9 @@ class CellCompleterHandler implements IDisposable {
     }
     let value = msg.content;
     let model = this._completer.model;
+    if (!model) {
+      return;
+    }
     // Completion request failures or negative results fail silently.
     if (value.status !== 'ok') {
       model.reset();
@@ -152,7 +156,7 @@ class CellCompleterHandler implements IDisposable {
    * Handle a completion requested signal from an editor.
    */
   protected onCompletionRequested(editor: ICellEditorWidget, request: ICompletionRequest): void {
-    if (!this.kernel || !this._completer.model) {
+    if (!this._kernel || !this._completer.model) {
       return;
     }
     this.makeRequest(request);
@@ -188,6 +192,28 @@ class CellCompleterHandler implements IDisposable {
 
   private _activeCell: BaseCellWidget = null;
   private _completer: CompleterWidget = null;
-  private _kernel: IKernel = null;
+  private _kernel: Kernel.IKernel = null;
   private _pending = 0;
+}
+
+/**
+ * A namespace for cell completer handler statics.
+ */
+export
+namespace CellCompleterHandler {
+  /**
+   * The instantiation options for cell completer handlers.
+   */
+  export
+  interface IOptions {
+    /**
+     * The completer widget the handler will connect to.
+     */
+    completer: CompleterWidget;
+
+    /**
+     * The kernel for the completer handler.
+     */
+    kernel?: Kernel.IKernel;
+  }
 }

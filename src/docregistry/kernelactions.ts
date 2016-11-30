@@ -2,11 +2,11 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IKernel
-} from 'jupyter-js-services';
+  Kernel
+} from '@jupyterlab/services';
 
 import {
-  showDialog
+  showDialog, cancelButton, warnButton
 } from '../dialog';
 
 
@@ -23,13 +23,14 @@ import {
  * This is a no-op if there is no kernel.
  */
 export
-function restartKernel(kernel: IKernel, host?: HTMLElement): Promise<boolean> {
+function restartKernel(kernel: Kernel.IKernel, host?: HTMLElement): Promise<boolean> {
   if (!kernel) {
     return Promise.resolve(false);
   }
   return showDialog({
     title: 'Restart Kernel?',
-    body: 'Do you want to restart the current kernel? All variables will be lost.'
+    body: 'Do you want to restart the current kernel? All variables will be lost.',
+    buttons: [cancelButton, warnButton]
   }).then(result => {
     if (result.text === 'OK') {
       return kernel.restart().then(() => { return true; });

@@ -236,7 +236,7 @@ margin-top = 14, 14, 14, 14, 8, 8
   padding: 0.5em 0.5em;
   line-height: 1.0;
   white-space: nowrap;
-  max-width: 100px;
+  max-width: 150px;
   text-overflow: ellipsis;
   overflow: hidden;
   border: none;
@@ -250,6 +250,11 @@ margin-top = 14, 14, 14, 14, 8, 8
 
 .jp-RenderedHTMLCommon tbody tr:nth-child(odd) {
   background: var(--md-grey-100);
+}
+
+
+.jp-RenderedHTMLCommon tbody tr:hover {
+  background: var(--md-light-blue-50);
 }
 
 

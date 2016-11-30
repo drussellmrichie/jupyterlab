@@ -11,9 +11,20 @@ import {
 } from '../commandpalette';
 
 import {
+  InstanceTracker
+} from '../common/instancetracker';
+
+import {
+  ILayoutRestorer
+} from '../layoutrestorer';
+
+import {
+  IStateDB
+} from '../statedb';
+
+import {
   IInspector, Inspector
 } from './';
-
 
 
 /**
@@ -22,43 +33,112 @@ import {
 export
 const inspectorProvider: JupyterLabPlugin<IInspector> = {
   id: 'jupyter.services.inspector',
+  requires: [ICommandPalette, IStateDB, ILayoutRestorer],
   provides: IInspector,
-  requires: [ICommandPalette],
   activate: activateInspector
 };
 
 
 /**
- * Activate the console extension.
+ * A class that manages inspector widget instances and offers persistent
+ * `IInspector` instance that other plugins can communicate with.
  */
-function activateInspector(app: JupyterLab, palette: ICommandPalette): IInspector {
-  let inspector = new Inspector({ items: Private.defaultInspectorItems });
-  let openInspectorCommand = 'inspector:open';
-  let opened = false;
-
-  inspector.id = 'jp-inspector';
-  inspector.title.label = 'Inspector';
-
-  function openInspector(): void {
-    if (!opened) {
-      app.shell.addToMainArea(inspector);
-      opened = true;
-    } else {
-      app.shell.activateMain(inspector.id);
+class InspectorManager implements IInspector {
+  /**
+   * The current inspector widget.
+   */
+  get inspector(): Inspector {
+    return this._inspector;
+  }
+  set inspector(inspector: Inspector) {
+    if (this._inspector === inspector) {
+      return;
+    }
+    this._inspector = inspector;
+    // If an inspector was added and it has no source
+    if (inspector && !inspector.source) {
+      inspector.source = this._source;
     }
   }
 
-  app.commands.addCommand(openInspectorCommand, {
-    execute: openInspector,
-    label: 'Open Inspector'
+  /**
+   * The source of events the inspector panel listens for.
+   */
+  get source(): Inspector.IInspectable {
+    return this._source;
+  }
+  set source(source: Inspector.IInspectable) {
+    if (this._source !== source) {
+      if (this._source) {
+        this._source.disposed.disconnect(this._onSourceDisposed, this);
+      }
+      this._source = source;
+      this._source.disposed.connect(this._onSourceDisposed, this);
+    }
+    if (this._inspector && !this._inspector.isDisposed) {
+      this._inspector.source = this._source;
+    }
+  }
+
+  /**
+   * Handle the source disposed signal.
+   */
+  private _onSourceDisposed() {
+    this._source = null;
+  }
+
+  private _inspector: Inspector = null;
+  private _source: Inspector.IInspectable = null;
+}
+
+
+/**
+ * Activate the console extension.
+ */
+function activateInspector(app: JupyterLab, palette: ICommandPalette, state: IStateDB, layout: ILayoutRestorer): IInspector {
+  const category = 'Inspector';
+  const command = 'inspector:open';
+  const label = 'Open Inspector';
+  const manager = new InspectorManager();
+  const tracker = new InstanceTracker<Inspector>({
+    restore: {
+      state, layout, command,
+      args: widget => null,
+      name: widget => 'inspector',
+      namespace: 'inspector',
+      when: app.started,
+      registry: app.commands
+    }
   });
 
-  palette.addItem({
-    command: openInspectorCommand,
-    category: 'Inspector'
-  });
+  function newInspector(): Inspector {
+    let inspector = new Inspector({ items: Private.defaultInspectorItems });
+    inspector.id = 'jp-inspector';
+    inspector.title.label = 'Inspector';
+    inspector.title.closable = true;
+    inspector.disposed.connect(() => {
+      if (manager.inspector === inspector) {
+        manager.inspector = null;
+      }
+    });
+    tracker.add(inspector);
+    return inspector;
+  }
 
-  return inspector;
+  function openInspector(): void {
+    if (!manager.inspector || manager.inspector.isDisposed) {
+      manager.inspector = newInspector();
+      app.shell.addToMainArea(manager.inspector);
+    }
+    if (manager.inspector.isAttached) {
+      app.shell.activateMain(manager.inspector.id);
+    }
+  }
+
+  app.commands.addCommand(command, { execute: openInspector, label });
+  palette.addItem({ command, category });
+
+  return manager;
 }
 
 /**

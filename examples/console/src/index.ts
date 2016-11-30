@@ -2,31 +2,6 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  ConsolePanel
-} from 'jupyterlab/lib/console';
-
-import {
-  CodeMirrorConsoleRenderer
-} from 'jupyterlab/lib/console/codemirror/widget';
-
-import {
-  startNewSession, findSessionByPath, connectToSession, ISession
-} from 'jupyter-js-services';
-
-import {
-  RenderMime
-} from 'jupyterlab/lib/rendermime';
-
-import {
-  HTMLRenderer, LatexRenderer, ImageRenderer, TextRenderer,
-  JavascriptRenderer, SVGRenderer, MarkdownRenderer
-} from 'jupyterlab/lib/renderers';
-
-import {
-  defaultSanitizer
-} from 'jupyterlab/lib/sanitizer';
-
-import {
   CommandRegistry
 } from 'phosphor/lib/ui/commandregistry';
 
@@ -46,6 +21,31 @@ import {
   Widget
 } from 'phosphor/lib/ui/widget';
 
+import {
+  Session
+} from '@jupyterlab/services';
+
+import {
+  ConsolePanel
+} from 'jupyterlab/lib/console';
+
+import {
+  CodeMirrorConsoleRenderer
+} from 'jupyterlab/lib/console/codemirror/widget';
+
+import {
+  RenderMime
+} from 'jupyterlab/lib/rendermime';
+
+import {
+  HTMLRenderer, LatexRenderer, ImageRenderer, TextRenderer,
+  JavascriptRenderer, SVGRenderer, MarkdownRenderer
+} from 'jupyterlab/lib/renderers';
+
+import {
+  defaultSanitizer
+} from 'jupyterlab/lib/sanitizer';
+
 import 'jupyterlab/lib/default-theme/index.css';
 import '../index.css';
 
@@ -64,21 +64,21 @@ function main(): void {
   });
 
   if (!query['path']) {
-    startNewSession({ path }).then(session => { startApp(session); });
+    Session.startNew({ path }).then(session => { startApp(session); });
     return;
   }
 
-  findSessionByPath(query['path'])
-    .then(model => { return connectToSession(model.id); })
+  Session.findByPath(query['path'])
+    .then(model => { return Session.connectTo(model.id); })
     .then(session => { startApp(session); })
     .catch(error => {
       console.warn(`path="${query['path']}"`, error);
-      startNewSession({ path }).then(session => { startApp(session); });
+      Session.startNew({ path }).then(session => { startApp(session); });
     });
 }
 
 
-function startApp(session: ISession) {
+function startApp(session: Session.ISession) {
   // Initialize the keymap manager with the bindings.
   let commands = new CommandRegistry();
   let keymap = new Keymap({ commands });

@@ -2,11 +2,11 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IContents
-} from 'jupyter-js-services';
+  Contents
+} from '@jupyterlab/services';
 
 import {
-  IModelFactory
+  DocumentRegistry
 } from '../../docregistry';
 
 import {
@@ -18,33 +18,25 @@ import {
  * A model factory for notebooks.
  */
 export
-class NotebookModelFactory implements IModelFactory<INotebookModel> {
+class NotebookModelFactory implements DocumentRegistry.IModelFactory<INotebookModel> {
   /**
    * The name of the model.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get name(): string {
     return 'notebook';
   }
 
   /**
-   * The type of the file.
-   *
-   * #### Notes
-   * This is a read-only property.
+   * The content type of the file.
    */
-  get fileType(): IContents.FileType {
+  get contentType(): Contents.ContentType {
     return 'notebook';
   }
 
   /**
    * The format of the file.
-   *
-   * This is a read-only property.
    */
-  get fileFormat(): IContents.FileFormat {
+  get fileFormat(): Contents.FileFormat {
     return 'json';
   }
 

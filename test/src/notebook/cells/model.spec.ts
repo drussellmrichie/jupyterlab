@@ -4,12 +4,16 @@
 import expect = require('expect.js');
 
 import {
-  IChangedArgs
-} from '../../../../lib/common/interfaces';
+  nbformat
+} from '@jupyterlab/services';
 
 import {
-  nbformat
-} from '../../../../lib/notebook/notebook/nbformat';
+  toArray
+} from 'phosphor/lib/algorithm/iteration';
+
+import {
+  IChangedArgs
+} from '../../../../lib/common/interfaces';
 
 import {
   CellModel, RawCellModel, MarkdownCellModel, CodeCellModel
@@ -235,9 +239,9 @@ describe('notebook/cells/model', () => {
       it('should get a list of user metadata keys', () => {
         let model = new CellModel();
         let cursor = model.getMetadata('foo');
-        expect(model.listMetadata()).to.be.empty();
+        expect(toArray(model.listMetadata())).to.be.empty();
         cursor.setValue(1);
-        expect(model.listMetadata()).to.eql(['foo']);
+        expect(toArray(model.listMetadata())).to.eql(['foo']);
       });
 
     });
@@ -406,7 +410,10 @@ describe('notebook/cells/model', () => {
           outputs: [
             {
               output_type: 'display_data',
-              data: { 'text/plain': 'foo' },
+              data: {
+                'text/plain': 'foo',
+                'application/json': { 'bar': 1 }
+              },
               metadata: {}
             } as nbformat.IDisplayData
           ],
@@ -414,8 +421,11 @@ describe('notebook/cells/model', () => {
           metadata: { trusted: false }
         };
         let model = new CodeCellModel(cell);
-        expect(model.toJSON()).to.not.equal(cell);
-        expect(model.toJSON()).to.eql(cell);
+        let serialized = model.toJSON();
+        expect(serialized).to.not.equal(cell);
+        expect(serialized).to.eql(cell);
+        let output = serialized.outputs[0] as any;
+        expect(output.data['application/json']['bar']).to.be(1);
       });
 
     });

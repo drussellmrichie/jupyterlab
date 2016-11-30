@@ -2,12 +2,16 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  utils
-} from 'jupyter-js-services';
+  nbformat, utils
+} from '@jupyterlab/services';
 
 import {
-  deepEqual
+  deepEqual, JSONValue
 } from 'phosphor/lib/algorithm/json';
+
+import {
+  IIterator, iter
+} from 'phosphor/lib/algorithm/iteration';
 
 import {
   IDisposable
@@ -26,10 +30,6 @@ import {
 } from '../common/metadata';
 
 import {
-  nbformat
-} from '../notebook/nbformat';
-
-import {
   OutputAreaModel
 } from '../output-area';
 
@@ -41,11 +41,8 @@ export
 interface ICellModel extends IDisposable {
   /**
    * The type of the cell.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
-  type: nbformat.CellType;
+  readonly type: nbformat.CellType;
 
   /**
    * A signal emitted when the content of the model changes.
@@ -55,7 +52,7 @@ interface ICellModel extends IDisposable {
   /**
    * A signal emitted when a metadata field changes.
    */
-  metadataChanged: ISignal<ICellModel, IChangedArgs<any>>;
+  metadataChanged: ISignal<ICellModel, IChangedArgs<JSONValue>>;
 
   /**
    * A signal emitted when a model state changes.
@@ -70,7 +67,7 @@ interface ICellModel extends IDisposable {
   /**
    * Serialize the model to JSON.
    */
-  toJSON(): any;
+  toJSON(): nbformat.ICell;
 
   /**
    * Get a metadata cursor for the cell.
@@ -88,7 +85,7 @@ interface ICellModel extends IDisposable {
    * #### Notes
    * Metadata associated with the nbformat are not included.
    */
-  listMetadata(): string[];
+  listMetadata(): IIterator<string>;
 }
 
 
@@ -108,7 +105,7 @@ interface ICodeCellModel extends ICellModel {
   /**
    * The code cell's prompt number. Will be null if the cell has not been run.
    */
-  executionCount: number;
+  executionCount: nbformat.ExecutionCount;
 
   /**
    * The cell outputs.
@@ -124,9 +121,6 @@ export
 interface IMarkdownCellModel extends ICellModel {
   /**
    * The type of the cell.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   type: 'markdown';
  }
@@ -139,9 +133,6 @@ export
 interface IRawCellModel extends ICellModel {
   /**
    * The type of the cell.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   type: 'raw';
 }
@@ -208,9 +199,6 @@ class CellModel implements ICellModel {
 
   /**
    * Get whether the model is disposed.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get isDisposed(): boolean {
     return this._metadata === null;
@@ -235,12 +223,12 @@ class CellModel implements ICellModel {
   /**
    * Serialize the model to JSON.
    */
-  toJSON(): nbformat.IBaseCell {
+  toJSON(): nbformat.ICell {
     return {
       cell_type: this.type,
       source: this.source,
       metadata: utils.copy(this._metadata) as nbformat.IBaseCellMetadata
-    };
+    } as nbformat.ICell;
   }
 
   /**
@@ -277,8 +265,8 @@ class CellModel implements ICellModel {
    * #### Notes
    * Metadata associated with the nbformat are not included.
    */
-  listMetadata(): string[] {
-    return Object.keys(this._metadata);
+  listMetadata(): IIterator<string> {
+    return iter(Object.keys(this._metadata));
   }
 
   /**
@@ -318,9 +306,6 @@ export
 class RawCellModel extends CellModel {
   /**
    * The type of the cell.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get type(): 'raw' {
     return 'raw';
@@ -335,9 +320,6 @@ export
 class MarkdownCellModel extends CellModel {
   /**
    * The type of the cell.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get type(): 'markdown' {
     return 'markdown';
@@ -353,12 +335,12 @@ class CodeCellModel extends CellModel implements ICodeCellModel {
   /**
    * Construct a new code cell with optional original cell content.
    */
-  constructor(cell?: nbformat.IBaseCell) {
+  constructor(cell?: nbformat.ICell) {
     super(cell);
     this._outputs = new OutputAreaModel();
     if (cell && cell.cell_type === 'code') {
-      this.executionCount = (cell as nbformat.ICodeCell).execution_count;
-      for (let output of (cell as nbformat.ICodeCell).outputs) {
+      this.executionCount = cell.execution_count;
+      for (let output of cell.outputs) {
         this._outputs.add(output);
       }
     }
@@ -369,9 +351,6 @@ class CodeCellModel extends CellModel implements ICodeCellModel {
 
   /**
    * The type of the cell.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get type(): 'code' {
     return 'code';
@@ -380,24 +359,21 @@ class CodeCellModel extends CellModel implements ICodeCellModel {
   /**
    * The execution count of the cell.
    */
-  get executionCount(): number {
-    return this._executionCount;
+  get executionCount(): nbformat.ExecutionCount {
+    return this._executionCount || null;
   }
-  set executionCount(newValue: number) {
+  set executionCount(newValue: nbformat.ExecutionCount) {
     if (newValue === this._executionCount) {
       return;
     }
     let oldValue = this.executionCount;
-    this._executionCount = newValue;
+    this._executionCount = newValue || null;
     this.contentChanged.emit(void 0);
     this.stateChanged.emit({ name: 'executionCount', oldValue, newValue });
   }
 
   /**
    * The cell outputs.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get outputs(): OutputAreaModel {
     return this._outputs;
@@ -420,7 +396,7 @@ class CodeCellModel extends CellModel implements ICodeCellModel {
    */
   toJSON(): nbformat.ICodeCell {
     let cell = super.toJSON() as nbformat.ICodeCell;
-    cell.execution_count = this.executionCount;
+    cell.execution_count = this.executionCount || null;
     let outputs = this.outputs;
     cell.outputs = [];
     for (let i = 0; i < outputs.length; i++) {
@@ -433,5 +409,5 @@ class CodeCellModel extends CellModel implements ICodeCellModel {
   }
 
   private _outputs: OutputAreaModel = null;
-  private _executionCount: number = null;
+  private _executionCount: nbformat.ExecutionCount = null;
 }

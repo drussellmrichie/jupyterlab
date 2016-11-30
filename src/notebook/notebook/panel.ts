@@ -2,8 +2,8 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IKernel, KernelMessage
-} from 'jupyter-js-services';
+  Kernel, KernelMessage
+} from '@jupyterlab/services';
 
 import {
   Message
@@ -34,7 +34,7 @@ import {
 } from '../../common/interfaces';
 
 import {
-  IDocumentContext, findKernel
+  DocumentRegistry
 } from '../../docregistry';
 
 import {
@@ -104,7 +104,9 @@ class NotebookPanel extends Widget {
     Widget.attach(this._completer, document.body);
 
     // Set up the completer handler.
-    this._completerHandler = new CellCompleterHandler(this._completer);
+    this._completerHandler = new CellCompleterHandler({
+      completer: this._completer
+    });
     this._completerHandler.activeCell = this._content.activeCell;
     this._content.activeCellChanged.connect((s, cell) => {
       this._completerHandler.activeCell = cell;
@@ -114,33 +116,27 @@ class NotebookPanel extends Widget {
   /**
    * A signal emitted when the panel has been activated.
    */
-  activated: ISignal<NotebookPanel, void>;
+  activated: ISignal<this, void>;
 
   /**
    * A signal emitted when the panel context changes.
    */
-  contextChanged: ISignal<NotebookPanel, void>;
+  contextChanged: ISignal<this, void>;
 
   /**
    * A signal emitted when the kernel used by the panel changes.
    */
-  kernelChanged: ISignal<NotebookPanel, IKernel>;
+  kernelChanged: ISignal<this, Kernel.IKernel>;
 
   /**
    * Get the toolbar used by the widget.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
-  get toolbar(): Toolbar {
-    return (this.layout as PanelLayout).widgets.at(0) as Toolbar;
+  get toolbar(): Toolbar<Widget> {
+    return (this.layout as PanelLayout).widgets.at(0) as Toolbar<Widget>;
   }
 
   /**
    * Get the content area used by the widget.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get content(): Notebook {
     return this._content;
@@ -148,19 +144,13 @@ class NotebookPanel extends Widget {
 
   /**
    * Get the current kernel used by the panel.
-   *
-   * #### Notes
-   * This is a a read-only property.
    */
-  get kernel(): IKernel {
+  get kernel(): Kernel.IKernel {
     return this._context ? this._context.kernel : null;
   }
 
   /**
    * Get the rendermime instance used by the widget.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get rendermime(): RenderMime {
     return this._rendermime;
@@ -175,9 +165,6 @@ class NotebookPanel extends Widget {
 
   /**
    * Get the clipboard instance used by the widget.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get clipboard(): IClipboard {
     return this._clipboard;
@@ -185,9 +172,6 @@ class NotebookPanel extends Widget {
 
   /**
    * The model for the widget.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get model(): INotebookModel {
     return this._content ? this._content.model : null;
@@ -200,10 +184,10 @@ class NotebookPanel extends Widget {
    * Changing the context also changes the model on the
    * `content`.
    */
-  get context(): IDocumentContext<INotebookModel> {
+  get context(): DocumentRegistry.IContext<INotebookModel> {
     return this._context;
   }
-  set context(newValue: IDocumentContext<INotebookModel>) {
+  set context(newValue: DocumentRegistry.IContext<INotebookModel>) {
     newValue = newValue || null;
     if (newValue === this._context) {
       return;
@@ -225,6 +209,7 @@ class NotebookPanel extends Widget {
       return;
     }
     this._context = null;
+    this._content.dispose();
     this._content = null;
     this._rendermime = null;
     this._clipboard = null;
@@ -245,19 +230,12 @@ class NotebookPanel extends Widget {
   }
 
   /**
-   * Handle `'deactivate-request'` messages.
-   */
-  protected onDeactivateRequest(msg: Message): void {
-    this.content.deactivate();
-  }
-
-  /**
    * Handle a change to the document context.
    *
    * #### Notes
    * The default implementation is a no-op.
    */
-  protected onContextChanged(oldValue: IDocumentContext<INotebookModel>, newValue: IDocumentContext<INotebookModel>): void {
+  protected onContextChanged(oldValue: DocumentRegistry.IContext<INotebookModel>, newValue: DocumentRegistry.IContext<INotebookModel>): void {
     // This is a no-op.
   }
 
@@ -274,37 +252,17 @@ class NotebookPanel extends Widget {
   /**
    * Handle a change to the document path.
    */
-  protected onPathChanged(sender: IDocumentContext<INotebookModel>, path: string): void {
+  protected onPathChanged(sender: DocumentRegistry.IContext<INotebookModel>, path: string): void {
     this.title.label = path.split('/').pop();
-  }
-
-  /**
-   * Handle a context population.
-   */
-  protected onPopulated(sender: IDocumentContext<INotebookModel>, args: void): void {
-    let model = sender.model;
-    // Clear the undo state of the cells.
-    if (model) {
-      model.cells.clearUndo();
-    }
-    if (!sender.kernel && model) {
-      let name = findKernel(
-        model.defaultKernelName,
-        model.defaultKernelLanguage,
-        sender.kernelspecs
-      );
-      sender.changeKernel({ name });
-    }
   }
 
   /**
    * Handle a change in the context.
    */
-  private _onContextChanged(oldValue: IDocumentContext<INotebookModel>, newValue: IDocumentContext<INotebookModel>): void {
+  private _onContextChanged(oldValue: DocumentRegistry.IContext<INotebookModel>, newValue: DocumentRegistry.IContext<INotebookModel>): void {
     if (oldValue) {
       oldValue.kernelChanged.disconnect(this._onKernelChanged, this);
       oldValue.pathChanged.disconnect(this.onPathChanged, this);
-      oldValue.populated.disconnect(this.onPopulated, this);
       if (oldValue.model) {
         oldValue.model.stateChanged.disconnect(this.onModelStateChanged, this);
       }
@@ -322,11 +280,18 @@ class NotebookPanel extends Widget {
     this._content.model = newValue.model;
     this._handleDirtyState();
     newValue.model.stateChanged.connect(this.onModelStateChanged, this);
-    if (newValue.isPopulated) {
-      this.onPopulated(newValue, void 0);
-    } else {
-      newValue.populated.connect(this.onPopulated, this);
+
+    // Clear the cells when the context is initially populated.
+    if (!newValue.isReady) {
+      newValue.ready.then(() => {
+        let model = newValue.model;
+        // Clear the undo state of the cells.
+        if (model) {
+          model.cells.clearUndo();
+        }
+      });
     }
+
     // Handle the document title.
     this.onPathChanged(context, context.path);
     context.pathChanged.connect(this.onPathChanged, this);
@@ -335,27 +300,19 @@ class NotebookPanel extends Widget {
   /**
    * Handle a change in the kernel by updating the document metadata.
    */
-  private _onKernelChanged(context: IDocumentContext<INotebookModel>, kernel: IKernel): void {
+  private _onKernelChanged(context: DocumentRegistry.IContext<INotebookModel>, kernel: Kernel.IKernel): void {
     this._completerHandler.kernel = kernel;
     this.content.inspectionHandler.kernel = kernel;
     this.kernelChanged.emit(kernel);
     if (!this.model || !kernel) {
       return;
     }
-    if (kernel.info) {
-      this._updateLanguage(kernel.info.language_info);
-    } else {
-      kernel.kernelInfo().then(msg => {
-        this._updateLanguage(msg.content.language_info);
-      });
-    }
-    if (kernel.spec) {
-      this._updateSpec(kernel);
-    } else {
-      kernel.getKernelSpec().then(spec => {
-        this._updateSpec(kernel);
-      });
-    }
+    kernel.ready.then(() => {
+      if (this.model) {
+        this._updateLanguage(kernel.info.language_info);
+      }
+    });
+    this._updateSpec(kernel);
   }
 
   /**
@@ -369,12 +326,14 @@ class NotebookPanel extends Widget {
   /**
    * Update the kernel spec.
    */
-  private _updateSpec(kernel: IKernel): void {
-    let specCursor = this.model.getMetadata('kernelspec');
-    specCursor.setValue({
-      name: kernel.name,
-      display_name: kernel.spec.display_name,
-      language: kernel.spec.language
+  private _updateSpec(kernel: Kernel.IKernel): void {
+    kernel.getSpec().then(spec => {
+      let specCursor = this.model.getMetadata('kernelspec');
+      specCursor.setValue({
+        name: kernel.name,
+        display_name: spec.display_name,
+        language: spec.language
+      });
     });
   }
 
@@ -396,7 +355,7 @@ class NotebookPanel extends Widget {
   private _completer: CompleterWidget = null;
   private _completerHandler: CellCompleterHandler = null;
   private _content: Notebook = null;
-  private _context: IDocumentContext<INotebookModel> = null;
+  private _context: DocumentRegistry.IContext<INotebookModel> = null;
   private _renderer: NotebookPanel.IRenderer = null;
   private _rendermime: RenderMime = null;
 }
@@ -448,7 +407,7 @@ export namespace NotebookPanel {
     /**
      * Create a new toolbar for the panel.
      */
-    createToolbar(): Toolbar;
+    createToolbar(): Toolbar<Widget>;
 
     /**
      * Create a new completer widget for the panel.
@@ -469,7 +428,7 @@ export namespace NotebookPanel {
     /**
      * Create a new toolbar for the panel.
      */
-    createToolbar(): Toolbar {
+    createToolbar(): Toolbar<Widget> {
       return new Toolbar();
     }
 

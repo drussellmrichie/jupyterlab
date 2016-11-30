@@ -2,10 +2,6 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  Widget
-} from 'phosphor/lib/ui/widget';
-
-import {
   JupyterLab, JupyterLabPlugin
 } from '../application';
 
@@ -14,9 +10,20 @@ import {
 } from '../commandpalette';
 
 import {
-  html
-} from './html';
+  InstanceTracker
+} from '../common/instancetracker';
 
+import {
+  ILayoutRestorer
+} from '../layoutrestorer';
+
+import {
+  IStateDB
+} from '../statedb';
+
+import {
+  AboutModel, AboutWidget
+} from './';
 
 /**
  * The about page extension.
@@ -26,28 +33,47 @@ const aboutExtension: JupyterLabPlugin<void> = {
   id: 'jupyter.extensions.about',
   activate: activateAbout,
   autoStart: true,
-  requires: [ICommandPalette]
+  requires: [ICommandPalette, IStateDB, ILayoutRestorer]
 };
 
 
-function activateAbout(app: JupyterLab, palette: ICommandPalette): void {
-  let widget = new Widget();
-  widget.id = 'about-jupyterlab';
-  widget.title.label = 'About';
-  widget.title.closable = true;
-  widget.node.innerHTML = html;
-  widget.node.style.overflowY = 'auto';
+function activateAbout(app: JupyterLab, palette: ICommandPalette, state: IStateDB, layout: ILayoutRestorer): void {
+  const model = new AboutModel();
+  const command = 'about-jupyterlab:show';
+  const category = 'Help';
+  const tracker = new InstanceTracker<AboutWidget>({
+    restore: {
+      state, layout, command,
+      args: widget => null,
+      name: widget => 'about',
+      namespace: 'about',
+      when: app.started,
+      registry: app.commands
+    }
+  });
 
-  let command = 'about-jupyterlab:show';
+  let widget: AboutWidget;
+
+  function newWidget(): AboutWidget {
+    let widget = new AboutWidget();
+    widget.model = model;
+    widget.id = 'about';
+    widget.title.label = 'About';
+    widget.title.closable = true;
+    tracker.add(widget);
+    return widget;
+  }
+
   app.commands.addCommand(command, {
     label: 'About JupyterLab',
     execute: () => {
-      if (!widget.isAttached) {
+      if (!widget || widget.isDisposed) {
+        widget = newWidget();
         app.shell.addToMainArea(widget);
-      } else {
-        app.shell.activateMain(widget.id);
       }
+      app.shell.activateMain(widget.id);
     }
   });
-  palette.addItem({ command, category: 'Help' });
+
+  palette.addItem({ command, category });
 }

@@ -15,10 +15,12 @@ var lab = new JupyterLab();
 lab.registerPlugins([
   require('jupyterlab/lib/about/plugin').aboutExtension,
   require('jupyterlab/lib/clipboard/plugin').clipboardProvider,
+  require('jupyterlab/lib/commandlinker/plugin').commandLinkerProvider,
   require('jupyterlab/lib/commandpalette/plugin').commandPaletteProvider,
-  require('jupyterlab/lib/console/plugin').consoleExtension,
+  require('jupyterlab/lib/console/plugin').consoleTrackerProvider,
   require('jupyterlab/lib/console/codemirror/plugin').rendererProvider,
   require('jupyterlab/lib/docregistry/plugin').docRegistryProvider,
+  require('jupyterlab/lib/docmanager/plugin').docManagerProvider,
   require('jupyterlab/lib/editorwidget/plugin').editorHandlerProvider,
   require('jupyterlab/lib/faq/plugin').faqExtension,
   require('jupyterlab/lib/filebrowser/plugin').fileBrowserProvider,
@@ -26,6 +28,8 @@ lab.registerPlugins([
   require('jupyterlab/lib/imagewidget/plugin').imageHandlerExtension,
   require('jupyterlab/lib/inspector/plugin').inspectorProvider,
   require('jupyterlab/lib/landing/plugin').landingExtension,
+  require('jupyterlab/lib/launcher/plugin').launcherProvider,
+  require('jupyterlab/lib/layoutrestorer/plugin').layoutRestorerProvider,
   require('jupyterlab/lib/main/plugin').mainExtension,
   require('jupyterlab/lib/mainmenu/plugin').mainMenuProvider,
   require('jupyterlab/lib/markdownwidget/plugin').markdownHandlerExtension,
@@ -35,6 +39,7 @@ lab.registerPlugins([
   require('jupyterlab/lib/running/plugin').runningSessionsExtension,
   require('jupyterlab/lib/services/plugin').servicesProvider,
   require('jupyterlab/lib/shortcuts/plugin').shortcutsExtension,
+  require('jupyterlab/lib/statedb/plugin').stateProvider,
   require('jupyterlab/lib/terminal/plugin').terminalExtension
 ]);
 

@@ -4,11 +4,15 @@
 import expect = require('expect.js');
 
 import {
+  toArray
+} from 'phosphor/lib/algorithm/iteration';
+
+import {
   MimeData
 } from 'phosphor/lib/core/mimedata';
 
 import {
-  NotebookModel
+  INotebookModel
 } from '../../../../lib/notebook/notebook/model';
 
 import {
@@ -20,12 +24,13 @@ import {
 } from '../../../../lib/notebook/notebook/widgetfactory';
 
 import {
-  MockContext
-} from '../../docmanager/mockcontext';
+  Context
+} from '../../../../lib/docregistry/context';
 
 import {
-  defaultRenderMime
-} from '../../rendermime/rendermime.spec';
+  createNotebookContext, defaultRenderMime
+} from '../../utils';
+
 
 import {
   CodeMirrorNotebookPanelRenderer
@@ -37,14 +42,35 @@ const clipboard = new MimeData();
 const renderer = CodeMirrorNotebookPanelRenderer.defaultRenderer;
 
 
+function createFactory(): NotebookWidgetFactory {
+  return new NotebookWidgetFactory({
+    name: 'notebook',
+    fileExtensions: ['.ipynb'],
+    rendermime,
+    clipboard,
+    renderer
+  });
+}
+
+
 describe('notebook/notebook/widgetfactory', () => {
+
+  let context: Context<INotebookModel>;
+
+  beforeEach(() => {
+    context = createNotebookContext();
+  });
+
+  afterEach(() => {
+    context.dispose();
+  });
 
   describe('NotebookWidgetFactory', () => {
 
     describe('#constructor()', () => {
 
       it('should create a notebook widget factory', () => {
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer);
+        let factory = createFactory();
         expect(factory).to.be.a(NotebookWidgetFactory);
       });
 
@@ -53,7 +79,7 @@ describe('notebook/notebook/widgetfactory', () => {
     describe('#isDisposed', () => {
 
       it('should get whether the factory has been disposed', () => {
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer);
+        let factory = createFactory();
         expect(factory.isDisposed).to.be(false);
         factory.dispose();
         expect(factory.isDisposed).to.be(true);
@@ -64,13 +90,13 @@ describe('notebook/notebook/widgetfactory', () => {
     describe('#dispose()', () => {
 
       it('should dispose of the resources held by the factory', () => {
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer );
+        let factory = createFactory();
         factory.dispose();
         expect(factory.isDisposed).to.be(true);
       });
 
       it('should be safe to call multiple times', () => {
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer );
+        let factory = createFactory();
         factory.dispose();
         factory.dispose();
         expect(factory.isDisposed).to.be(true);
@@ -81,53 +107,21 @@ describe('notebook/notebook/widgetfactory', () => {
     describe('#createNew()', () => {
 
       it('should create a new `NotebookPanel` widget', () => {
-        let model = new NotebookModel();
-        let context = new MockContext<NotebookModel>(model);
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer );
+        let factory = createFactory();
         let panel = factory.createNew(context);
         expect(panel).to.be.a(NotebookPanel);
       });
 
       it('should create a clone of the rendermime', () => {
-        let model = new NotebookModel();
-        let context = new MockContext<NotebookModel>(model);
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer );
+        let factory = createFactory();
         let panel = factory.createNew(context);
         expect(panel.rendermime).to.not.be(rendermime);
       });
 
-      it('should start a kernel if one is given', () => {
-        let model = new NotebookModel();
-        let context = new MockContext<NotebookModel>(model);
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer );
-        let panel = factory.createNew(context, { name: 'shell' });
-        expect(panel.context.kernel.name).to.be('shell');
-      });
-
-      it('should start a kernel given the default kernel language', () => {
-        let model = new NotebookModel();
-        let context = new MockContext<NotebookModel>(model);
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer );
-        let panel = factory.createNew(context);
-        expect(panel.context.kernel.name).to.be('python');
-      });
-
-      it('should start a kernel based on default language of the model', () => {
-        let model = new NotebookModel();
-        let cursor = model.getMetadata('language_info');
-        cursor.setValue({ name: 'shell' });
-        let context = new MockContext<NotebookModel>(model);
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer );
-        let panel = factory.createNew(context);
-        expect(panel.context.kernel.name).to.be('shell');
-      });
-
       it('should populate the default toolbar items', () => {
-        let model = new NotebookModel();
-        let context = new MockContext<NotebookModel>(model);
-        let factory = new NotebookWidgetFactory(rendermime, clipboard, renderer );
+        let factory = createFactory();
         let panel = factory.createNew(context);
-        let items = panel.toolbar.list();
+        let items = toArray(panel.toolbar.names());
         expect(items).to.contain('save');
         expect(items).to.contain('restart');
         expect(items).to.contain('kernelStatus');

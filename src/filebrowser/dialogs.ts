@@ -2,8 +2,12 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IContents, IKernel, ISession
-} from 'jupyter-js-services';
+  Contents, Kernel, Session
+} from '@jupyterlab/services';
+
+import {
+  IterableOrArrayLike, each
+} from 'phosphor/lib/algorithm/iteration';
 
 import {
   Widget
@@ -18,7 +22,7 @@ import {
 } from '../docmanager';
 
 import {
-  IKernelPreference, populateKernels
+  DocumentRegistry, populateKernels
 } from '../docregistry';
 
 import {
@@ -43,7 +47,9 @@ const FILE_CONFLICT_CLASS = 'jp-mod-conflict';
 export
 function createFromDialog(model: FileBrowserModel, manager: DocumentManager, creatorName: string): Promise<Widget> {
   let handler = new CreateFromHandler(model, manager, creatorName);
-  return handler.populate().then(() => {
+  return manager.services.ready.then(() => {
+    return handler.populate();
+  }).then(() => {
     return handler.showDialog();
   });
 }
@@ -55,11 +61,12 @@ function createFromDialog(model: FileBrowserModel, manager: DocumentManager, cre
 export
 function openWithDialog(path: string, manager: DocumentManager, host?: HTMLElement): Promise<Widget> {
   let handler: OpenWithHandler;
-  return manager.listSessions().then(sessions => {
-    handler = new OpenWithHandler(path, manager, sessions);
+  return manager.services.ready.then(() => {
+    handler = new OpenWithHandler(path, manager);
     return showDialog({
       title: 'Open File',
       body: handler.node,
+      primary: handler.inputNode,
       okText: 'OPEN'
     });
   }).then(result => {
@@ -76,12 +83,13 @@ function openWithDialog(path: string, manager: DocumentManager, host?: HTMLEleme
 export
 function createNewDialog(model: FileBrowserModel, manager: DocumentManager, host?: HTMLElement): Promise<Widget> {
   let handler: CreateNewHandler;
-  return manager.listSessions().then(sessions => {
-    handler = new CreateNewHandler(model, manager, sessions);
+  return manager.services.ready.then(() => {
+    handler = new CreateNewHandler(model, manager);
     return showDialog({
       title: 'Create New File',
       host,
       body: handler.node,
+      primary: handler.inputNode,
       okText: 'CREATE'
     });
   }).then(result => {
@@ -96,7 +104,7 @@ function createNewDialog(model: FileBrowserModel, manager: DocumentManager, host
  * Rename a file with optional dialog.
  */
 export
-function renameFile(model: FileBrowserModel, oldPath: string, newPath: string): Promise<IContents.IModel> {
+function renameFile(model: FileBrowserModel, oldPath: string, newPath: string): Promise<Contents.IModel> {
   return model.rename(oldPath, newPath).catch(error => {
     if (error.xhr) {
       error.message = `${error.xhr.statusText} ${error.xhr.status}`;
@@ -128,11 +136,9 @@ class OpenWithHandler extends Widget {
   /**
    * Construct a new "open with" dialog.
    */
-  constructor(path: string, manager: DocumentManager, sessions: ISession.IModel[], host?: HTMLElement) {
+  constructor(path: string, manager: DocumentManager) {
     super({ node: Private.createOpenWithNode() });
     this._manager = manager;
-    this._host = host;
-    this._sessions = sessions;
 
     this.inputNode.textContent = path;
     this._ext = path.split('.').pop();
@@ -145,9 +151,7 @@ class OpenWithHandler extends Widget {
    * Dispose of the resources used by the widget.
    */
   dispose(): void {
-    this._host = null;
     this._manager = null;
-    this._sessions = null;
     super.dispose();
   }
 
@@ -179,9 +183,9 @@ class OpenWithHandler extends Widget {
     let path = this.inputNode.textContent;
     let widgetName = this.widgetDropdown.value;
     let kernelValue = this.kernelDropdownNode.value;
-    let kernelId: IKernel.IModel;
+    let kernelId: Kernel.IModel;
     if (kernelValue !== 'null') {
-      kernelId = JSON.parse(kernelValue) as IKernel.IModel;
+      kernelId = JSON.parse(kernelValue) as Kernel.IModel;
     }
     return this._manager.open(path, widgetName, kernelId);
   }
@@ -190,13 +194,13 @@ class OpenWithHandler extends Widget {
    * Populate the widget factories.
    */
   protected populateFactories(): void {
-    let factories = this._manager.registry.listWidgetFactories(this._ext);
+    let factories = this._manager.registry.preferredWidgetFactories(this._ext);
     let widgetDropdown = this.widgetDropdown;
-    for (let factory of factories) {
+    each(factories, factory => {
       let option = document.createElement('option');
-      option.text = factory;
+      option.text = factory.name;
       widgetDropdown.appendChild(option);
-    }
+    });
     this.widgetChanged();
   }
 
@@ -208,8 +212,8 @@ class OpenWithHandler extends Widget {
     let preference = this._manager.registry.getKernelPreference(
       this._ext, widgetName
     );
-    let specs = this._manager.kernelspecs;
-    let sessions = this._sessions;
+    let specs = this._manager.services.specs;
+    let sessions = this._manager.services.sessions.running();
     Private.updateKernels(this.kernelDropdownNode,
       { preference, specs, sessions }
     );
@@ -217,8 +221,6 @@ class OpenWithHandler extends Widget {
 
   private _ext = '';
   private _manager: DocumentManager = null;
-  private _host: HTMLElement = null;
-  private _sessions: ISession.IModel[] = null;
 }
 
 
@@ -240,12 +242,12 @@ class CreateFromHandler extends Widget {
     this.inputNode.addEventListener('input', () => {
       let value = this.inputNode.value;
       if (value !== this._orig) {
-        for (let item of this._model.items) {
+        each(this._model.items(), item => {
           if (item.name === value) {
             this.addClass(FILE_CONFLICT_CLASS);
             return;
           }
-        }
+        });
       }
       this.removeClass(FILE_CONFLICT_CLASS);
     });
@@ -281,6 +283,7 @@ class CreateFromHandler extends Widget {
     return showDialog({
       title: `Create New ${this._creatorName}`,
       body: this.node,
+      primary: this.inputNode,
       okText: 'CREATE'
     }).then(result => {
       if (result.text === 'CREATE') {
@@ -291,6 +294,7 @@ class CreateFromHandler extends Widget {
           return widget;
         });
       }
+      this._model.deleteFile('/' + this._orig.path);
       return null;
     });
   }
@@ -303,23 +307,26 @@ class CreateFromHandler extends Widget {
     let manager = this._manager;
     let registry = manager.registry;
     let creator = registry.getCreator(this._creatorName);
+    if (!creator) {
+      return Promise.reject(`Creator not registered: ${this._creatorName}`);
+    }
     let { fileType, widgetName, kernelName } = creator;
     let fType = registry.getFileType(fileType);
     let ext = '.txt';
-    let type: IContents.FileType = 'file';
+    let type: Contents.ContentType = 'file';
     if (fType) {
       ext = fType.extension;
-      type = fType.fileType || 'file';
+      type = fType.contentType || 'file';
     }
     if (!widgetName || widgetName === 'default') {
-      this._widgetName = widgetName = registry.defaultWidgetFactory(ext);
+      this._widgetName = widgetName = registry.defaultWidgetFactory(ext).name;
     }
 
     // Handle the kernel preferences.
     let preference = registry.getKernelPreference(ext, widgetName);
     if (preference.canStartKernel) {
-      let specs = this._manager.kernelspecs;
-      let sessions = this._sessions;
+      let specs = this._manager.services.specs;
+      let sessions = this._manager.services.sessions.running();
       let preferredKernel = kernelName;
       Private.updateKernels(this.kernelDropdownNode,
         { specs, sessions, preferredKernel, preference }
@@ -328,11 +335,10 @@ class CreateFromHandler extends Widget {
       this.node.removeChild(this.kernelDropdownNode);
     }
 
-    return manager.listSessions().then(sessions => {
-      this._sessions = sessions;
-      return model.newUntitled({ ext, type });
-    }).then(contents => {
-      this.inputNode.value = this._orig = contents.name;
+    return model.newUntitled({ ext, type }).then(contents => {
+      let value = this.inputNode.value = contents.name;
+      this.inputNode.setSelectionRange(0, value.length - ext.length);
+      this._orig = contents;
     });
   }
 
@@ -340,30 +346,32 @@ class CreateFromHandler extends Widget {
    * Open the file and return the document widget.
    */
   private _open(): Promise<Widget> {
-    let path = this.inputNode.value;
+    let file = this.inputNode.value;
     let widgetName = this._widgetName;
-    let kernelValue = this.kernelDropdownNode ? this.kernelDropdownNode.value : 'null';
-    let kernelId: IKernel.IModel;
+    let kernelValue = this.kernelDropdownNode ? this.kernelDropdownNode.value
+      : 'null';
+    let kernelId: Kernel.IModel;
     if (kernelValue !== 'null') {
-      kernelId = JSON.parse(kernelValue) as IKernel.IModel;
+      kernelId = JSON.parse(kernelValue) as Kernel.IModel;
     }
-    if (path !== this._orig) {
-      return renameFile(this._model, this._orig, path).then(value => {
-        if (!value) {
+    if (file !== this._orig.name) {
+      let promise = renameFile(this._model, this._orig.name, file);
+      return promise.then((contents: Contents.IModel) => {
+        if (!contents) {
           return null;
         }
-        return this._manager.createNew(path, widgetName, kernelId);
+        return this._manager.open(contents.path, widgetName, kernelId);
       });
     }
+    let path = this._orig.path;
     return Promise.resolve(this._manager.createNew(path, widgetName, kernelId));
   }
 
   private _model: FileBrowserModel = null;
   private _creatorName: string;
   private _widgetName: string;
-  private _orig: string;
+  private _orig: Contents.IModel = null;
   private _manager: DocumentManager;
-  private _sessions: ISession.IModel[] = [];
 }
 
 
@@ -374,11 +382,10 @@ class CreateNewHandler extends Widget {
   /**
    * Construct a new "create new" dialog.
    */
-  constructor(model: FileBrowserModel, manager: DocumentManager, sessions: ISession.IModel[]) {
+  constructor(model: FileBrowserModel, manager: DocumentManager) {
     super({ node: Private.createCreateNewNode() });
     this._model = model;
     this._manager = manager;
-    this._sessions = sessions;
 
     // Create a file name based on the current time.
     let time = new Date();
@@ -386,6 +393,7 @@ class CreateNewHandler extends Widget {
     let name = time.toJSON().slice(0, 10);
     name += '-' + time.getHours() + time.getMinutes() + time.getSeconds();
     this.inputNode.value = name + '.txt';
+    this.inputNode.setSelectionRange(0, name.length);
 
     // Check for name conflicts when the inputNode changes.
     this.inputNode.addEventListener('input', () => {
@@ -409,7 +417,6 @@ class CreateNewHandler extends Widget {
    */
   dispose(): void {
     this._model = null;
-    this._sessions = null;
     this._manager = null;
     super.dispose();
   }
@@ -456,9 +463,9 @@ class CreateNewHandler extends Widget {
     let path = this.inputNode.textContent;
     let widgetName = this.widgetDropdown.value;
     let kernelValue = this.kernelDropdownNode.value;
-    let kernelId: IKernel.IModel;
+    let kernelId: Kernel.IModel;
     if (kernelValue !== 'null') {
-      kernelId = JSON.parse(kernelValue) as IKernel.IModel;
+      kernelId = JSON.parse(kernelValue) as Kernel.IModel;
     }
     return this._manager.createNew(path, widgetName, kernelId);
   }
@@ -468,19 +475,19 @@ class CreateNewHandler extends Widget {
    */
   protected inputNodeChanged(): void {
     let path = this.inputNode.value;
-    for (let item of this._model.items) {
+    each(this._model.items(), item => {
       if (item.path === path) {
         this.addClass(FILE_CONFLICT_CLASS);
         return;
       }
-    }
+    });
     let ext = this.ext;
     if (ext === this._prevExt) {
       return;
     }
     // Update the file type dropdown and the factories.
     if (this._extensions.indexOf(ext) === -1) {
-      this.fileTypeDropdown.value = this._sentinal;
+      this.fileTypeDropdown.value = this._sentinel;
     } else {
       this.fileTypeDropdown.value = ext;
     }
@@ -491,22 +498,22 @@ class CreateNewHandler extends Widget {
    * Populate the file types.
    */
   protected populateFileTypes(): void {
-    let fileTypes = this._manager.registry.listFileTypes();
     let dropdown = this.fileTypeDropdown;
     let option = document.createElement('option');
     option.text = 'File';
-    option.value = this._sentinal;
-    for (let ft of fileTypes) {
+    option.value = this._sentinel;
+
+    each(this._manager.registry.fileTypes(), ft => {
       option = document.createElement('option');
       option.text = `${ft.name} (${ft.extension})`;
       option.value = ft.extension;
       dropdown.appendChild(option);
       this._extensions.push(ft.extension);
-    }
+    });
     if (this.ext in this._extensions) {
       dropdown.value = this.ext;
     } else {
-      dropdown.value = this._sentinal;
+      dropdown.value = this._sentinel;
     }
   }
 
@@ -515,13 +522,13 @@ class CreateNewHandler extends Widget {
    */
   protected populateFactories(): void {
     let ext = this.ext;
-    let factories = this._manager.registry.listWidgetFactories(ext);
+    let factories = this._manager.registry.preferredWidgetFactories(ext);
     let widgetDropdown = this.widgetDropdown;
-    for (let factory of factories) {
+    each(factories, factory => {
       let option = document.createElement('option');
-      option.text = factory;
+      option.text = factory.name;
       widgetDropdown.appendChild(option);
-    }
+    });
     this.widgetDropdownChanged();
     this._prevExt = ext;
   }
@@ -547,9 +554,10 @@ class CreateNewHandler extends Widget {
   protected widgetDropdownChanged(): void {
     let ext = this.ext;
     let widgetName = this.widgetDropdown.value;
-    let preference = this._manager.registry.getKernelPreference(ext, widgetName);
-    let specs = this._manager.kernelspecs;
-    let sessions = this._sessions;
+    let manager = this._manager;
+    let preference = manager.registry.getKernelPreference(ext, widgetName);
+    let specs = manager.services.specs;
+    let sessions = manager.services.sessions.running();
     Private.updateKernels(this.kernelDropdownNode,
       { preference, sessions, specs }
     );
@@ -557,8 +565,7 @@ class CreateNewHandler extends Widget {
 
   private _model: FileBrowserModel = null;
   private _manager: DocumentManager = null;
-  private _sessions: ISession.IModel[] = null;
-  private _sentinal = 'UNKNOWN_EXTENSION';
+  private _sentinel = 'UNKNOWN_EXTENSION';
   private _prevExt = '';
   private _extensions: string[] = [];
 }
@@ -626,11 +633,17 @@ namespace Private {
       node.disabled = true;
       return;
     }
+    // Bail if there are no kernel specs.
+    if (!specs) {
+      return;
+    }
     let preferredLanguage = preference.language;
     node.disabled = false;
+
     populateKernels(node,
       { specs, sessions, preferredLanguage, preferredKernel }
     );
+
     // Select the "null" valued kernel if we do not prefer a kernel.
     if (!preference.preferKernel) {
       node.value = 'null';
@@ -645,17 +658,17 @@ namespace Private {
     /**
      * The kernel preference.
      */
-    preference: IKernelPreference;
+    preference: DocumentRegistry.IKernelPreference;
 
     /**
      * The kernel specs.
      */
-    specs: IKernel.ISpecModels;
+    specs: Kernel.ISpecModels;
 
     /**
      * The running sessions.
      */
-    sessions: ISession.IModel[];
+    sessions: IterableOrArrayLike<Session.IModel>;
 
     /**
      * The preferred kernel name.

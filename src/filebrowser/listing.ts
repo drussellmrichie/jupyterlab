@@ -2,15 +2,23 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IContents
-} from 'jupyter-js-services';
+  Contents
+} from '@jupyterlab/services';
 
 import {
-  find, findIndex
+  IIterator, each, filter, map, toArray
+} from 'phosphor/lib/algorithm/iteration';
+
+import {
+  find, findIndex, indexOf
 } from 'phosphor/lib/algorithm/searching';
 
 import {
-  Message
+  Vector
+} from 'phosphor/lib/collections/vector';
+
+import {
+  Message, sendMessage
 } from 'phosphor/lib/core/messaging';
 
 import {
@@ -22,11 +30,11 @@ import {
 } from 'phosphor/lib/dom/dragdrop';
 
 import {
-  scrollIntoViewIfNeeded
+  hitTest, scrollIntoViewIfNeeded
 } from 'phosphor/lib/dom/query';
 
 import {
-  Widget
+  Widget, WidgetMessage
 } from 'phosphor/lib/ui/widget';
 
 import {
@@ -34,16 +42,12 @@ import {
 } from '../common/dates';
 
 import {
-  showDialog
+  showDialog, cancelButton, deleteButton
 } from '../dialog';
 
 import {
   DocumentManager
 } from '../docmanager';
-
-import {
-  IWidgetOpener
-} from './browser';
 
 import {
   renameFile
@@ -203,12 +207,12 @@ class DirListing extends Widget {
     });
     this.addClass(DIR_LISTING_CLASS);
     this._model = options.model;
+    this._model.fileChanged.connect(this._onFileChanged, this);
     this._model.refreshed.connect(this._onModelRefreshed, this);
     this._model.pathChanged.connect(this._onPathChanged, this);
     this._editNode = document.createElement('input');
     this._editNode.className = EDITOR_CLASS;
     this._manager = options.manager;
-    this._opener = options.opener;
     this._renderer = options.renderer || DirListing.defaultRenderer;
     let headerNode = utils.findElement(this.node, HEADER_CLASS);
     this._renderer.populateHeaderNode(headerNode);
@@ -224,15 +228,11 @@ class DirListing extends Widget {
     this._drag = null;
     this._dragData = null;
     this._manager = null;
-    this._opener = null;
     super.dispose();
   }
 
   /**
    * Get the model used by the listing.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get model(): FileBrowserModel {
     return this._model;
@@ -245,8 +245,6 @@ class DirListing extends Widget {
    * This is the node which holds the header cells.
    *
    * Modifying this node directly can lead to undefined behavior.
-   *
-   * This is a read-only property.
    */
   get headerNode(): HTMLElement {
     return utils.findElement(this.node, HEADER_CLASS);
@@ -259,8 +257,6 @@ class DirListing extends Widget {
    * This is the node which holds the item nodes.
    *
    * Modifying this node directly can lead to undefined behavior.
-   *
-   * This is a read-only property.
    */
   get contentNode(): HTMLElement {
     return utils.findElement(this.node, CONTENT_CLASS);
@@ -268,42 +264,40 @@ class DirListing extends Widget {
 
   /**
    * The renderer instance used by the directory listing.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get renderer(): DirListing.IRenderer {
     return this._renderer;
   }
 
   /**
-   * The the sorted content items.
-   */
-  get sortedItems(): IContents.IModel[] {
-    return this._sortedModels;
-  }
-
-  /**
    * The current sort state.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get sortState(): DirListing.ISortState {
     return this._sortState;
   }
 
   /**
+   * Create an iterator over the listing's sorted items.
+   *
+   * @returns A new iterator over the listing's sorted items.
+   */
+  sortedItems(): IIterator<Contents.IModel> {
+    return this._sortedItems.iter();
+  }
+
+  /**
    * Sort the items using a sort condition.
    */
   sort(state: DirListing.ISortState): void {
-    this._sortedModels = Private.sort(this.model.items, state);
+    this._sortedItems = new Vector(Private.sort(this.model.items(), state));
     this._sortState = state;
     this.update();
   }
 
   /**
    * Rename the first currently selected item.
+   *
+   * @returns A promise that resolves with the new name of the item.
    */
   rename(): Promise<string> {
     return this._doRename();
@@ -326,13 +320,15 @@ class DirListing extends Widget {
 
   /**
    * Paste the items from the clipboard.
+   *
+   * @returns A promise that resolves when the operation is complete.
    */
   paste(): Promise<void> {
     if (!this._clipboard.length) {
       return;
     }
-    let promises: Promise<IContents.IModel>[] = [];
-    for (let path of this._clipboard) {
+    let promises: Promise<Contents.IModel>[] = [];
+    each(this._clipboard, path => {
       if (this._isCut) {
         let parts = path.split('/');
         let name = parts[parts.length - 1];
@@ -340,32 +336,33 @@ class DirListing extends Widget {
       } else {
         promises.push(this._model.copy(path, '.'));
       }
-    }
-    // Remove any cut modifiers.
-    for (let item of this._items) {
-      item.classList.remove(CUT_CLASS);
-    }
+    });
 
-    this._clipboard = [];
+    // Remove any cut modifiers.
+    each(this._items, item => {
+      item.classList.remove(CUT_CLASS);
+    });
+
+    this._clipboard.clear();
     this._isCut = false;
     this.removeClass(CLIPBOARD_CLASS);
-    return Promise.all(promises).then(
-      () => this._model.refresh(),
-      error => utils.showErrorMessage(this, 'Paste Error', error)
-    );
+    return Promise.all(promises).catch(error => {
+      utils.showErrorMessage('Paste Error', error);
+    });
   }
 
   /**
    * Delete the currently selected item(s).
+   *
+   * @returns A promise that resolves when the operation is complete.
    */
   delete(): Promise<void> {
     let names: string[] = [];
-    let items = this._model.items;
-    for (let item of items) {
+    each(this._sortedItems, item => {
       if (this._selection[item.name]) {
         names.push(item.name);
       }
-    }
+    });
     let message = `Permanently delete these ${names.length} files?`;
     if (names.length === 1) {
       message = `Permanently delete file "${names[0]}"?`;
@@ -374,7 +371,8 @@ class DirListing extends Widget {
       return showDialog({
         title: 'Delete file?',
         body: message,
-        okText: 'DELETE'
+        okText: 'DELETE',
+        buttons: [cancelButton, deleteButton]
       }).then(result => {
         if (result.text === 'DELETE') {
           return this._delete(names);
@@ -386,18 +384,19 @@ class DirListing extends Widget {
 
   /**
    * Duplicate the currently selected item(s).
+   *
+   * @returns A promise that resolves when the operation is complete.
    */
   duplicate(): Promise<void> {
-    let promises: Promise<IContents.IModel>[] = [];
+    let promises: Promise<Contents.IModel>[] = [];
     for (let item of this._getSelectedItems()) {
       if (item.type !== 'directory') {
         promises.push(this._model.copy(item.path, this._model.path));
       }
     }
-    return Promise.all(promises).then(
-      () => this._model.refresh(),
-      error => utils.showErrorMessage(this, 'Duplicate file', error)
-    );
+    return Promise.all(promises).catch(error => {
+      utils.showErrorMessage('Duplicate file', error);
+    });
   }
 
   /**
@@ -406,28 +405,29 @@ class DirListing extends Widget {
   download(): void {
     for (let item of this._getSelectedItems()) {
       if (item.type !== 'directory') {
-        this._model.download(item.path)
+        this._model.download(item.path);
       }
     }
   }
 
   /**
    * Shut down kernels on the applicable currently selected items.
+   *
+   * @returns A promise that resolves when the operation is complete.
    */
   shutdownKernels(): Promise<void> {
     let promises: Promise<void>[] = [];
-    let items = this.sortedItems;
-    let paths = items.map(item => item.path);
-    for (let session of this._model.sessions) {
-      let index = paths.indexOf(session.notebook.path);
-      if (this._selection[items[index].name]) {
+    let items = this._sortedItems;
+    let paths = toArray(map(items, item => item.path));
+    each(this._model.sessions(), session => {
+      let index = indexOf(paths, session.notebook.path);
+      if (this._selection[items.at(index).name]) {
         promises.push(this._model.shutdown(session.id));
       }
-    }
-    return Promise.all(promises).then(
-      () => this._model.refresh(),
-      error => utils.showErrorMessage(this, 'Shutdown kernel', error)
-    );
+    });
+    return Promise.all(promises).catch(error => {
+      utils.showErrorMessage('Shutdown kernel', error);
+    });
   }
 
   /**
@@ -438,7 +438,7 @@ class DirListing extends Widget {
   selectNext(keepExisting = false): void {
     let index = -1;
     let selected = Object.keys(this._selection);
-    let items = this.sortedItems;
+    let items = this._sortedItems;
     if (selected.length === 1 || keepExisting) {
       // Select the next item.
       let name = selected[selected.length - 1];
@@ -457,6 +457,7 @@ class DirListing extends Widget {
     }
     if (index !== -1) {
       this._selectItem(index, keepExisting);
+      scrollIntoViewIfNeeded(this.contentNode, this._items.at(index));
     }
   }
 
@@ -468,7 +469,7 @@ class DirListing extends Widget {
   selectPrevious(keepExisting = false): void {
     let index = -1;
     let selected = Object.keys(this._selection);
-    let items = this.sortedItems;
+    let items = this._sortedItems;
     if (selected.length === 1 || keepExisting) {
       // Select the previous item.
       let name = selected[0];
@@ -487,11 +488,16 @@ class DirListing extends Widget {
     }
     if (index !== -1) {
       this._selectItem(index, keepExisting);
+      scrollIntoViewIfNeeded(this.contentNode, this._items.at(index));
     }
   }
 
   /**
    * Get whether an item is selected by name.
+   *
+   * @param name - The name of of the item.
+   *
+   * @returns Whether the item is selected.
    */
   isSelected(name: string): boolean {
     return this._selection[name] === true;
@@ -499,12 +505,16 @@ class DirListing extends Widget {
 
   /**
    * Find a path given a click.
+   *
+   * @param event - The mouse event.
+   *
+   * @returns The path to the selected file.
    */
   pathForClick(event: MouseEvent): string {
-    let items = this.sortedItems;
-    let index = utils.hitTestNodes(this._items, event.clientX, event.clientY);
+    let items = this._sortedItems;
+    let index = Private.hitTestNodes(this._items, event.clientX, event.clientY);
     if (index !== -1) {
-      return items[index].path;
+      return items.at(index).path;
     }
   }
 
@@ -606,7 +616,7 @@ class DirListing extends Widget {
    */
   protected onUpdateRequest(msg: Message): void {
     // Fetch common variables.
-    let items = this.sortedItems;
+    let items = this._sortedItems;
     let nodes = this._items;
     let content = utils.findElement(this.node, CONTENT_CLASS);
     let renderer = this._renderer;
@@ -616,7 +626,7 @@ class DirListing extends Widget {
 
     // Remove any excess item nodes.
     while (nodes.length > items.length) {
-      let node = nodes.pop();
+      let node = nodes.popBack();
       content.removeChild(node);
     }
 
@@ -624,24 +634,26 @@ class DirListing extends Widget {
     while (nodes.length < items.length) {
       let node = renderer.createItemNode();
       node.classList.add(ITEM_CLASS);
-      nodes.push(node);
+      nodes.pushBack(node);
       content.appendChild(node);
     }
 
     // Remove extra classes from the nodes.
-    for (let i = 0, n = items.length; i < n; ++i) {
-      nodes[i].classList.remove(SELECTED_CLASS);
-      nodes[i].classList.remove(RUNNING_CLASS);
-      nodes[i].classList.remove(CUT_CLASS);
-    }
+    each(nodes, item => {
+      item.classList.remove(SELECTED_CLASS);
+      item.classList.remove(RUNNING_CLASS);
+      item.classList.remove(CUT_CLASS);
+    });
 
     // Add extra classes to item nodes based on widget state.
     for (let i = 0, n = items.length; i < n; ++i) {
-      renderer.updateItemNode(nodes[i], items[i]);
-      if (this._selection[items[i].name]) {
-        nodes[i].classList.add(SELECTED_CLASS);
+      let node = nodes.at(i);
+      let item = items.at(i);
+      renderer.updateItemNode(node, item);
+      if (this._selection[item.name]) {
+        node.classList.add(SELECTED_CLASS);
         if (this._isCut && this._model.path === this._prevPath) {
-          nodes[i].classList.add(CUT_CLASS);
+          node.classList.add(CUT_CLASS);
         }
       }
     }
@@ -656,14 +668,18 @@ class DirListing extends Widget {
     }
 
     // Handle notebook session statuses.
-    let paths = items.map(item => item.path);
-    let specs = this._model.kernelspecs;
-    for (let session of this._model.sessions) {
-      let index = paths.indexOf(session.notebook.path);
-      let node = this._items[index];
+    let paths = toArray(map(items, item => item.path));
+    each(this._model.sessions(), session => {
+      let index = indexOf(paths, session.notebook.path);
+      let node = nodes.at(index);
       node.classList.add(RUNNING_CLASS);
-      node.title = specs.kernelspecs[session.kernel.name].spec.display_name;
-    }
+      let name = session.kernel.name;
+      let specs = this._model.specs;
+      if (specs) {
+        name = specs.kernelspecs[name].display_name;
+      }
+      node.title = name;
+    });
 
     this._prevPath = this._model.path;
   }
@@ -726,7 +742,7 @@ class DirListing extends Widget {
     }
     this._inContext = false;
 
-    let index = utils.hitTestNodes(this._items, event.clientX, event.clientY);
+    let index = Private.hitTestNodes(this._items, event.clientX, event.clientY);
     if (index === -1) {
       return;
     }
@@ -846,21 +862,14 @@ class DirListing extends Widget {
     }
 
     let model = this._model;
-    let item = this.sortedItems[i];
+    let item = this._sortedItems.at(i);
     if (item.type === 'directory') {
       model.cd(item.name).catch(error =>
-        showErrorMessage(this, 'Open directory', error)
+        showErrorMessage('Open directory', error)
       );
     } else {
       let path = item.path;
-      let widget = this._manager.findWidget(path);
-      if (!widget) {
-        widget = this._manager.open(item.path);
-        let context = this._manager.contextForWidget(widget);
-        context.populated.connect(() => model.refresh() );
-        context.kernelChanged.connect(() => model.refresh() );
-      }
-      this._opener.open(widget);
+      this._manager.openOrReveal(path);
     }
   }
 
@@ -870,11 +879,11 @@ class DirListing extends Widget {
    */
   private _evtDragEnter(event: IDragEvent): void {
     if (event.mimeData.hasData(utils.CONTENTS_MIME)) {
-      let index = utils.hitTestNodes(this._items, event.clientX, event.clientY);
+      let index = Private.hitTestNodes(this._items, event.clientX, event.clientY);
       if (index === -1) {
         return;
       }
-      let item = this.sortedItems[index];
+      let item = this._sortedItems.at(index);
       if (item.type !== 'directory' || this._selection[item.name]) {
         return;
       }
@@ -908,8 +917,8 @@ class DirListing extends Widget {
     if (dropTarget) {
       dropTarget.classList.remove(utils.DROP_TARGET_CLASS);
     }
-    let index = utils.hitTestNodes(this._items, event.clientX, event.clientY);
-    this._items[index].classList.add(utils.DROP_TARGET_CLASS);
+    let index = Private.hitTestNodes(this._items, event.clientX, event.clientY);
+    this._items.at(index).classList.add(utils.DROP_TARGET_CLASS);
   }
 
   /**
@@ -938,21 +947,20 @@ class DirListing extends Widget {
     }
 
     // Get the path based on the target node.
-    let index = this._items.indexOf(target);
-    let items = this.sortedItems;
-    let path = items[index].name + '/';
+    let index = indexOf(this._items, target);
+    let items = this._sortedItems;
+    let path = items.at(index).name + '/';
 
     // Move all of the items.
-    let promises: Promise<IContents.IModel>[] = [];
+    let promises: Promise<Contents.IModel>[] = [];
     let names = event.mimeData.getData(utils.CONTENTS_MIME) as string[];
     for (let name of names) {
       let newPath = path + name;
       promises.push(renameFile(this._model, name, newPath));
     }
-    Promise.all(promises).then(
-      () => this._model.refresh(),
-      error => utils.showErrorMessage(this, 'Move Error', error)
-    );
+    Promise.all(promises).catch(error => {
+      utils.showErrorMessage('Move Error', error);
+    });
   }
 
   /**
@@ -960,14 +968,13 @@ class DirListing extends Widget {
    */
   private _startDrag(index: number, clientX: number, clientY: number): void {
     let selectedNames = Object.keys(this._selection);
-    let source = this._items[index];
-    let model = this._model;
-    let items = this.sortedItems;
-    let item: IContents.IModel = null;
+    let source = this._items.at(index);
+    let items = this._sortedItems;
+    let item: Contents.IModel = null;
 
     // If the source node is not selected, use just that node.
     if (!source.classList.contains(SELECTED_CLASS)) {
-      item = items[index];
+      item = items.at(index);
       selectedNames = [item.name];
     } else if (selectedNames.length === 1) {
       let name = selectedNames[0];
@@ -991,11 +998,7 @@ class DirListing extends Widget {
         let widget = this._manager.findWidget(path);
         if (!widget) {
           widget = this._manager.open(item.path);
-          let context = this._manager.contextForWidget(widget);
-          context.populated.connect(() => model.refresh() );
-          context.kernelChanged.connect(() => model.refresh() );
         }
-        this._opener.open(widget);
         return widget;
       });
     }
@@ -1015,8 +1018,8 @@ class DirListing extends Widget {
    */
   private _handleFileSelect(event: MouseEvent): void {
     // Fetch common variables.
-    let items = this.sortedItems;
-    let index = utils.hitTestNodes(this._items, event.clientX, event.clientY);
+    let items = this._sortedItems;
+    let index = Private.hitTestNodes(this._items, event.clientX, event.clientY);
 
     clearTimeout(this._selectTimer);
 
@@ -1027,7 +1030,7 @@ class DirListing extends Widget {
     // Clear any existing soft selection.
     this._softSelection = '';
 
-    let name = items[index].name;
+    let name = items.at(index).name;
     let selected = Object.keys(this._selection);
 
     // Handle toggling.
@@ -1065,17 +1068,35 @@ class DirListing extends Widget {
   }
 
   /**
+   * Select an item by name.
+   *
+   * @parem name - The name of the item to select.
+   *
+   * @returns A promise that resolves when the name is selected.
+   */
+  private _selectItemByName(name: string): Promise<void> {
+    // Make sure the file is available.
+    return this.model.cd('.').then(() => {
+      let items = this._sortedItems;
+      let index = findIndex(items, value => value.name === name);
+      this._selectItem(index, false);
+      sendMessage(this, WidgetMessage.UpdateRequest);
+      scrollIntoViewIfNeeded(this.contentNode, this._items.at(index));
+    });
+  }
+
+  /**
    * Handle a multiple select on a file item node.
    */
   private _handleMultiSelect(selected: string[], index: number): void {
     // Find the "nearest selected".
-    let items = this.sortedItems;
+    let items = this._sortedItems;
     let nearestIndex = -1;
     for (let i = 0; i < this._items.length; i++) {
       if (i === index) {
         continue;
       }
-      let name = items[i].name;
+      let name = items.at(i).name;
       if (selected.indexOf(name) !== -1) {
         if (nearestIndex === -1) {
           nearestIndex = i;
@@ -1096,7 +1117,7 @@ class DirListing extends Widget {
     for (let i = 0; i < this._items.length; i++) {
       if (nearestIndex >= i && index <= i ||
           nearestIndex <= i && index >= i) {
-        this._selection[items[i].name] = true;
+        this._selection[items.at(i).name] = true;
       }
     }
   }
@@ -1104,20 +1125,20 @@ class DirListing extends Widget {
   /**
    * Get the currently selected items.
    */
-  private _getSelectedItems(): IContents.IModel[] {
-    let items = this.sortedItems;
-    return items.filter(item => this._selection[item.name]);
+  private _getSelectedItems(): Contents.IModel[] {
+    let items = this._sortedItems;
+    return toArray(filter(items, item => this._selection[item.name]));
   }
 
   /**
    * Copy the selected items, and optionally cut as well.
    */
   private _copy(): void {
-    this._clipboard = [];
+    this._clipboard.clear();
     for (let item of this._getSelectedItems()) {
       if (item.type !== 'directory') {
         // Store the absolute path of the item.
-        this._clipboard.push('/' + item.path);
+        this._clipboard.pushBack('/' + item.path);
       }
     }
     this.update();
@@ -1131,34 +1152,34 @@ class DirListing extends Widget {
     for (let name of names) {
       promises.push(this._model.deleteFile(name));
     }
-    return Promise.all(promises).then(
-      () => this._model.refresh(),
-      error => utils.showErrorMessage(this, 'Delete file', error)
-    );
+    return Promise.all(promises).catch(error => {
+      utils.showErrorMessage('Delete file', error);
+    });
   }
 
   /**
    * Allow the user to rename item on a given row.
    */
   private _doRename(): Promise<string> {
-    let items = this.sortedItems;
+    let items = this._sortedItems;
     let name = Object.keys(this._selection)[0];
     let index = findIndex(items, value => value.name === name);
-    let row = this._items[index];
-    let item = items[index];
+    let row = this._items.at(index);
+    let item = items.at(index);
     let nameNode = this.renderer.getNameNode(row);
     let original = item.name;
     this._editNode.value = original;
+    this._selectItem(index, false);
 
     return Private.doRename(nameNode, this._editNode).then(newName => {
       if (newName === original) {
-        return;
+        return original;
       }
       return renameFile(this._model, original, newName).catch(error => {
-        utils.showErrorMessage(this, 'Rename Error', error);
+        utils.showErrorMessage('Rename Error', error);
         return original;
       }).then(() => {
-        this._model.refresh();
+        this._selectItemByName(newName);
         return newName;
       });
     });
@@ -1169,13 +1190,12 @@ class DirListing extends Widget {
    */
   private _selectItem(index: number, keepExisting: boolean) {
     // Selected the given row(s)
-    let items = this.sortedItems;
+    let items = this._sortedItems;
     if (!keepExisting) {
       this._selection = Object.create(null);
     }
-    let name = items[index].name;
+    let name = items.at(index).name;
     this._selection[name] = true;
-    scrollIntoViewIfNeeded(this.contentNode, this._items[index]);
     this._isCut = false;
   }
 
@@ -1186,12 +1206,12 @@ class DirListing extends Widget {
     // Update the selection.
     let existing = Object.keys(this._selection);
     this._selection = Object.create(null);
-    for (let item of this._model.items) {
+    each(this._model.items(), item => {
       let name = item.name;
       if (existing.indexOf(name) !== -1) {
         this._selection[name] = true;
       }
-    }
+    });
     // Update the sorted items.
     this.sort(this.sortState);
   }
@@ -1206,10 +1226,23 @@ class DirListing extends Widget {
     this.sort(this.sortState);
   }
 
+  /**
+   * Handle a `fileChanged` signal from the model.
+   */
+  private _onFileChanged(sender: FileBrowserModel, args: Contents.IChangedArgs) {
+    if (args.type === 'new') {
+      this._selectItemByName(args.newValue.name).then(() => {
+        if (args.newValue === 'directory') {
+          this._doRename();
+        }
+      });
+    }
+  }
+
   private _model: FileBrowserModel = null;
   private _editNode: HTMLInputElement = null;
-  private _items: HTMLElement[] = [];
-  private _sortedModels: IContents.IModel[] = null;
+  private _items = new Vector<HTMLElement>();
+  private _sortedItems: Vector<Contents.IModel> = null;
   private _sortState: DirListing.ISortState = { direction: 'ascending', key: 'name' };
   private _drag: Drag = null;
   private _dragData: { pressX: number, pressY: number, index: number } = null;
@@ -1217,9 +1250,8 @@ class DirListing extends Widget {
   private _noSelectTimer = -1;
   private _isCut = false;
   private _prevPath = '';
-  private _clipboard: string[] = [];
+  private _clipboard = new Vector<string>();
   private _manager: DocumentManager = null;
-  private _opener: IWidgetOpener = null;
   private _softSelection = '';
   private _inContext = false;
   private _selection: { [key: string]: boolean; } = Object.create(null);
@@ -1246,11 +1278,6 @@ namespace DirListing {
      * A document manager instance.
      */
     manager: DocumentManager;
-
-    /**
-     * A widget opener function.
-     */
-    opener: IWidgetOpener;
 
     /**
      * A renderer for file items.
@@ -1318,7 +1345,7 @@ namespace DirListing {
      *
      * @param model - The model object to use for the item state.
      */
-    updateItemNode(node: HTMLElement, model: IContents.IModel): void;
+    updateItemNode(node: HTMLElement, model: Contents.IModel): void;
 
     /**
      * Get the node containing the file name.
@@ -1452,7 +1479,7 @@ namespace DirListing {
      *
      * @param model - The model object to use for the item state.
      */
-    updateItemNode(node: HTMLElement, model: IContents.IModel): void {
+    updateItemNode(node: HTMLElement, model: Contents.IModel): void {
       let icon = utils.findElement(node, ITEM_ICON_CLASS);
       let text = utils.findElement(node, ITEM_TEXT_CLASS);
       let modified = utils.findElement(node, ITEM_MODIFIED_CLASS);
@@ -1477,7 +1504,11 @@ namespace DirListing {
         modTitle = dateTime(model.last_modified);
       }
 
-      text.textContent = model.name;
+      // If an item is being edited currently, its text node is unavailable.
+      if (text) {
+        text.textContent = model.name;
+      }
+
       modified.textContent = modText;
       modified.title = modTitle;
     }
@@ -1580,6 +1611,22 @@ namespace Private {
           changed = false;
           edit.blur();
           break;
+        case 38:  // Up arrow
+          event.stopPropagation();
+          event.preventDefault();
+          if (edit.selectionStart !== edit.selectionEnd) {
+            edit.selectionStart = edit.selectionEnd = 0;
+          }
+          break;
+        case 40:  // Down arrow
+          event.stopPropagation();
+          event.preventDefault();
+          if (edit.selectionStart !== edit.selectionEnd) {
+            edit.selectionStart = edit.selectionEnd = edit.value.length;
+          }
+          break;
+        default:
+          break;
         }
       };
     });
@@ -1589,10 +1636,16 @@ namespace Private {
    * Sort a list of items by sort state as a new array.
    */
   export
-  function sort(items: IContents.IModel[], state: DirListing.ISortState) : IContents.IModel[] {
-    let output = items.slice();
+  function sort(items: IIterator<Contents.IModel>, state: DirListing.ISortState) : Vector<Contents.IModel> {
+    // Shortcut for unmodified.
+    if (state.key !== 'last_modified' && state.direction === 'ascending') {
+      return new Vector(items);
+    }
+
+    let copy = toArray(items);
+
     if (state.key === 'last_modified') {
-      output.sort((a, b) => {
+      copy.sort((a, b) => {
         let valA = new Date(a.last_modified).getTime();
         let valB = new Date(b.last_modified).getTime();
         return valB - valA;
@@ -1601,8 +1654,17 @@ namespace Private {
 
     // Reverse the order if descending.
     if (state.direction === 'descending') {
-      output.reverse();
+      copy.reverse();
     }
-    return output;
+
+    return new Vector(copy);
+  }
+
+  /**
+   * Get the index of the node at a client position, or `-1`.
+   */
+  export
+  function hitTestNodes(nodes: Vector<HTMLElement>, x: number, y: number): number {
+    return findIndex(nodes, node => hitTest(node, x, y));
   }
 }

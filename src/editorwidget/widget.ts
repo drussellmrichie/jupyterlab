@@ -7,27 +7,27 @@ import * as CodeMirror
 import 'codemirror/mode/meta';
 
 import {
-  IKernel
-} from 'jupyter-js-services';
+  Kernel
+} from '@jupyterlab/services';
 
 import {
   Token
 } from 'phosphor/lib/core/token';
 
 import {
-  FocusTracker
-} from 'phosphor/lib/ui/focustracker';
-
-import {
   loadModeByFileName
 } from '../codemirror';
+
+import {
+  IInstanceTracker
+} from '../common/instancetracker';
 
 import {
   CodeMirrorWidget, DEFAULT_CODEMIRROR_THEME
 } from '../codemirror/widget';
 
 import {
-  ABCWidgetFactory, IDocumentModel, IDocumentContext
+  ABCWidgetFactory, DocumentRegistry
 } from '../docregistry';
 
 
@@ -46,7 +46,7 @@ const EDITOR_CLASS = 'jp-EditorWidget';
  * A class that tracks editor widgets.
  */
 export
-interface IEditorTracker extends FocusTracker<EditorWidget> {}
+interface IEditorTracker extends IInstanceTracker<EditorWidget> {}
 
 
 /* tslint:disable */
@@ -66,7 +66,7 @@ class EditorWidget extends CodeMirrorWidget {
   /**
    * Construct a new editor widget.
    */
-  constructor(context: IDocumentContext<IDocumentModel>) {
+  constructor(context: DocumentRegistry.Context) {
     super({
       extraKeys: {
         'Tab': 'indentMore',
@@ -82,7 +82,12 @@ class EditorWidget extends CodeMirrorWidget {
     let editor = this.editor;
     let model = context.model;
     let doc = editor.getDoc();
-    doc.setValue(model.toString());
+    //Prevent the initial loading from disk from
+    //being in the editor history.
+    context.ready.then( () => {
+      doc.setValue(model.toString());
+      doc.clearHistory();
+    });
     this.title.label = context.path.split('/').pop();
     loadModeByFileName(editor, context.path);
     model.stateChanged.connect((m, args) => {
@@ -115,11 +120,11 @@ class EditorWidget extends CodeMirrorWidget {
   /**
    * Get the context for the editor widget.
    */
-  get context(): IDocumentContext<IDocumentModel> {
+  get context(): DocumentRegistry.Context {
     return this._context;
   }
 
-  private _context: IDocumentContext<IDocumentModel>;
+  private _context: DocumentRegistry.Context;
 }
 
 
@@ -127,16 +132,11 @@ class EditorWidget extends CodeMirrorWidget {
  * A widget factory for editors.
  */
 export
-class EditorWidgetFactory extends ABCWidgetFactory<EditorWidget, IDocumentModel> {
+class EditorWidgetFactory extends ABCWidgetFactory<EditorWidget, DocumentRegistry.IModel> {
   /**
    * Create a new widget given a context.
    */
-  createNew(context: IDocumentContext<IDocumentModel>, kernel?: IKernel.IModel): EditorWidget {
-    if (kernel) {
-      context.changeKernel(kernel);
-    }
-    let widget = new EditorWidget(context);
-    this.widgetCreated.emit(widget);
-    return widget;
+  protected createNewWidget(context: DocumentRegistry.Context): EditorWidget {
+    return new EditorWidget(context);
   }
 }

@@ -5,10 +5,11 @@
 **[Getting help](#getting-help)**
 
 
-# [JupyterLab](http://jupyter.github.io/jupyterlab/)
+# [JupyterLab](http://jupyterlab.github.io/jupyterlab/)
 
-[![Build Status](https://travis-ci.org/jupyter/jupyterlab.svg?branch=master)](https://travis-ci.org/jupyter/jupyterlab)
-[![Documentation Status](https://readthedocs.org/projects/jupyterlab-tutorial/badge/?version=latest)](http://jupyterlab-tutorial.readthedocs.io/en/latest/?badge=latest)
+[![Build Status](https://travis-ci.org/jupyterlab/jupyterlab.svg?branch=master)](https://travis-ci.org/jupyter/jupyterlab)
+[![Binder](http://mybinder.org/badge.svg)](http://mybinder.org/repo/jupyterlab/jupyterlab/lab)
+[![Documentation Status](https://readthedocs.org/projects/jupyterlab-tutorial/badge/?version=latest)](https://jupyterlab-tutorial.readthedocs.io/en/latest/?badge=latest)
 [![Google Group](https://img.shields.io/badge/-Google%20Group-lightgrey.svg)](https://groups.google.com/forum/#!forum/jupyter)
 
 An extensible computational environment for Jupyter.
@@ -35,11 +36,17 @@ jupyter notebook --version
 
 The runtime versions which are currently *known to work*:
 
-- IE 11+
-- Firefox 32+
-- Chrome 38+
+- Firefox 49+
+- Chrome 39+
+- Safari 10+
 
 Earlier browser versions may also work, but come with no guarantees.
+
+JupyterLab uses CSS Variables for styling, which is one reason for the
+minimum versions listed above.  IE 11+ or Edge 14 do not support
+CSS Variables, and are not directly supported at this time.
+A tool like [postcss](http://postcss.org/) can be used to convert the CSS files in the
+`jupyterlab/build` directory manually if desired. 
 
 ----
 
@@ -68,6 +75,8 @@ JupyterLab will open automatically in your browser. You may also access
 JupyterLab by entering the notebook server's URL (`http://localhost:8888`) in
 the browser.
 
+Instructions on how to install the project from the git sources are available in our [contributor documentation](CONTRIBUTING.md).
+
 ----
 
 ## Contributing
@@ -86,13 +95,13 @@ All code is licensed under the terms of the revised BSD license.
 
 ## Getting help
 We encourage you to ask questions on the [mailing list](https://groups.google.com/forum/#!forum/jupyter),
-and you may participate in development discussions or get live help on [Gitter](https://gitter.im/jupyter/jupyterlab).
+and you may participate in development discussions or get live help on [Gitter](https://gitter.im/jupyterlab/jupyterlab).
 
 
 ## Resources
 
-- [Reporting Issues](https://github.com/jupyter/jupyterlab/issues)
-- [API Docs](http://jupyter.github.io/jupyterlab/)
-- [Architecture tutorial](http://jupyterlab-tutorial.readthedocs.io/en/latest/index.html)
-- [Documentation for Project Jupyter](http://jupyter.readthedocs.io/en/latest/index.html) | [PDF](https://media.readthedocs.org/pdf/jupyter/latest/jupyter.pdf)
+- [Reporting Issues](https://github.com/jupyterlab/jupyterlab/issues)
+- [API Docs](http://jupyterlab.github.io/jupyterlab/)
+- [Architecture tutorial](https://jupyterlab-tutorial.readthedocs.io/en/latest/index.html)
+- [Documentation for Project Jupyter](https://jupyter.readthedocs.io/en/latest/index.html) | [PDF](https://media.readthedocs.org/pdf/jupyter/latest/jupyter.pdf)
 - [Project Jupyter website](https://jupyter.org)

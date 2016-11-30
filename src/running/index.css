@@ -17,7 +17,6 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: row;
-  border-bottom: var(--jp-border-width) solid var(--jp-border-color2);
 }
 
 
@@ -71,7 +70,7 @@
   font-weight: 600;
   text-transform: uppercase;
   border-bottom: var(--jp-border-width) solid var(--jp-border-color2);
-  letter-spacing: 2px;
+  letter-spacing: 1.2px;
 }
 
 
@@ -93,7 +92,7 @@
 .jp-RunningSessions-item {
   display: flex;
   flex-direction: row;
-  padding: 3px 12px;
+  padding: 2px;
   font-size: 13px;
   font-weight: 500;
   color: var(--jp-ui-font-color1);
@@ -110,7 +109,7 @@
   padding: 1px 4px;
   font-size: 14px;
   font-family: FontAwesome;
-  color: #5e5e5e;
+  color: var(--jp-accent-color1);
   margin-right: 7px;
   margin-left: 7px;
   vertical-align: baseline;
@@ -118,6 +117,11 @@
 
 .jp-RunningSessions-itemIcon.jp-mod-notebook:before {
   content: '\f02d';
+}
+
+
+.jp-RunningSessions-itemIcon.jp-mod-console:before {
+  content: '\f109';
 }
 
 
@@ -130,10 +134,16 @@
   content: '\f120';
 }
 
+
 .jp-RunningSessions-itemLabel {
   flex: 1 1 auto;
   padding: 1px;
+  margin-right: 4px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  direction: rtl;
 }
+
 
 .jp-RunningSessions-itemKernelName {
   flex: 0 0 auto;
@@ -145,8 +155,9 @@
 .jp-RunningSessions-itemShutdown {
   flex: 0 0 auto;
   padding: 1px 4px;
+  margin-right: 8px;
   color: var(--jp-inverse-ui-font-color0);
-  background: var(--jp-warn-color);
+  background: var(--jp-warn-color1);
   border-radius: 1px;
   cursor: pointer;
 }

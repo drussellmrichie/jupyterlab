@@ -6,18 +6,30 @@ import {
 } from '../application';
 
 import {
+  InstanceTracker
+} from '../common/instancetracker';
+
+import {
   IDocumentRegistry
 } from '../docregistry';
 
 import {
-  CSVWidgetFactory
+  ILayoutRestorer
+} from '../layoutrestorer';
+
+import {
+  IStateDB
+} from '../statedb';
+
+import {
+  CSVWidget, CSVWidgetFactory
 } from './widget';
 
 
 /**
- * The list of file extensions for csv tables.
+ * The name of the factory that creates CSV widgets.
  */
-const EXTENSIONS = ['.csv'];
+const FACTORY = 'Table';
 
 
 /**
@@ -25,8 +37,8 @@ const EXTENSIONS = ['.csv'];
  */
 export
 const csvHandlerExtension: JupyterLabPlugin<void> = {
-  id: 'jupyter.extensions.csvHandler',
-  requires: [IDocumentRegistry],
+  id: 'jupyter.extensions.csv-handler',
+  requires: [IDocumentRegistry, IStateDB, ILayoutRestorer],
   activate: activateCSVWidget,
   autoStart: true
 };
@@ -35,15 +47,29 @@ const csvHandlerExtension: JupyterLabPlugin<void> = {
 /**
  * Activate the table widget extension.
  */
-function activateCSVWidget(app: JupyterLab, registry: IDocumentRegistry): void {
-  let options = {
-    fileExtensions: EXTENSIONS,
-    defaultFor: EXTENSIONS,
-    displayName: 'Table',
-    modelName: 'text',
-    preferKernel: false,
-    canStartKernel: false
-  };
+function activateCSVWidget(app: JupyterLab, registry: IDocumentRegistry, state: IStateDB, layout: ILayoutRestorer): void {
+  const factory = new CSVWidgetFactory({
+    name: FACTORY,
+    fileExtensions: ['.csv'],
+    defaultFor: ['.csv']
+  });
+  const tracker = new InstanceTracker<CSVWidget>({
+    restore: {
+      state, layout,
+      command: 'file-operations:open',
+      args: widget => ({ path: widget.context.path, factory: FACTORY }),
+      name: widget => widget.context.path,
+      namespace: 'csvwidget',
+      when: app.started,
+      registry: app.commands
+    }
+  });
 
-  registry.addWidgetFactory(new CSVWidgetFactory(), options);
+  registry.addWidgetFactory(factory);
+  factory.widgetCreated.connect((sender, widget) => {
+    // Track the widget.
+    tracker.add(widget);
+    // Notify the instance tracker if restore data needs to update.
+    widget.context.pathChanged.connect(() => { tracker.save(widget); });
+  });
 }

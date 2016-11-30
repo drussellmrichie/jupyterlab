@@ -3,7 +3,7 @@
 
 There are several design patterns that are repeated throughout
 the repository.  This guide is meant to supplement the 
-[TypeScript Style Guide](https://github.com/jupyter/jupyterlab/wiki/TypeScript-Style-Guide).
+[TypeScript Style Guide](https://github.com/jupyterlab/jupyterlab/wiki/TypeScript-Style-Guide).
 
 
 ## TypeScript
@@ -41,7 +41,7 @@ to declutter the class definition.
 
 The "Private" module namespace is used to group variables and
 functions that are not intended to be exported and may have
-otherwise existed as module-level variables and functions.  
+otherwise existed as module-level variables and functions.
 The use of the namespace also makes it clear when a variable access
 is to an imported name or from the module itself.  Finally,
 the namespace allows the entire section to be collapsed in
@@ -93,9 +93,49 @@ The subclassed methods would be called before the subclass constructor has
 finished evaluating, resulting in undefined state.
 
 
+## Getters vs. Methods
+
+Prefer a method when the return value must be computed each time.
+Prefer a getter for simple attribute lookup.
+A getter should yield the same value every time.
+
+
 ## Data Structures
 
-Prefer to use Phosphor [Phosphor `Vector`](http://phosphorjs.github.io/phosphor/api/classes/_collections_vector_.vector.html) over JavaScript `Array` for internal use,
-and expose Vectors as ISequences for external use.  This allows us to use
-the Phosphor algorithms which provide advanced functionality over what is
-offered by the native Arrays.
+Prefer to use Phosphor [Phosphor `Vector`](http://phosphorjs.github.io/phosphor/api/classes/_collections_vector_.vector.html) 
+over JavaScript `Array` for internal use for its extra flexibility.
+
+For public API, we have three options: JavaScript `Array`, 
+[Phosphor `IIterator`](http://phosphorjs.github.io/phosphor/api/interfaces/_algorithm_iteration_.iiterable.html), and 
+[Phosphor `ISequence`](http://phosphorjs.github.io/phosphor/api/interfaces/_algorithm_sequence_.isequence.html).
+
+Prefer an `Array` for:
+- A return value is the result of a newly allocated array, to avoid the 
+extra allocation of an iterator.
+- A signal payload.
+- A public attribute that is inherently static.  Use `.slice()` to
+make sure the internal value cannot be mutated by the consumer.
+
+Prefer an `IIterator` for:
+- A return value where the value is based on an internal `Vector` but the 
+value should not need to be accessed randomly.
+- A set of return values that can be computed lazily.
+
+Prefer an `ISequence` when:
+- A return value or public attribute based on an internal `Vector` where the 
+value may need to be accessed randomly.
+
+
+## DOM Events
+
+If an object instance should respond to DOM events, create a `handleEvent`
+method for the class and register the object instance as the event handler. The
+`handleEvent` method should switch on the event type and could call private
+methods to carry out the actions. Often a widget class will add itself as an
+event listener to its own node in the `onAfterAttach` method with something like
+`this.node.addEventListener('mousedown', this)` and unregister itself in the
+`onBeforeDetach` method with `this.node.removeEventListener('mousedown', this)`
+Dispatching events from the `handleEvent` method makes it easier to trace, log,
+and debug event handling. For more information about the `handleEvent` method,
+see the [EventListener](https://developer.mozilla.org/en-US/docs/Web/API/EventListener)
+API.

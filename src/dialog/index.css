@@ -25,11 +25,17 @@
 
 
 .jp-Dialog-content {
+  display: flex;
+  flex-direction: column;
   margin-left: auto;
   margin-right: auto;
   background: #FAFAFA;
   padding: 24px;
-  width: 300px;
+  padding-bottom: 12px;
+  min-width: 300px;
+  min-height: 150px;
+  max-width: 500px;
+  max-height: 500px;
   box-sizing: border-box;
   box-shadow: 0px 2px 2px 0px rgba(0,0,0,0.5);
   word-wrap: break-word;
@@ -37,27 +43,37 @@
 
 
 .jp-Dialog-header {
+  flex: 0 0 auto;
   padding-bottom: 12px;
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 300;
   color: #616161;
 }
 
 
 .jp-Dialog-body {
+  flex: 1 1 auto;
   font-size: 15px;
   background: #FAFAFA;
+  overflow: auto;
 }
 
 
 .jp-Dialog-bodyContent {
   font-size: 15px;
-  outline: none;
-  margin-bottom: 12px;
+  overflow: auto;
 }
 
 
 .jp-Dialog-footer {
-  margin-top: 24px;
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  margin-top: 12px;
+  margin-left: -12px;
+  margin-right: -12px;
+  padding: 12px;
 }
 
 
@@ -69,15 +85,11 @@
 
 
 .jp-Dialog-button {
-  font-size: 15px;
+  font-size: 13px;
   border: none;
-  min-width: 120px;
-  max-width: 120px;
   text-transform: uppercase;
   line-height: 38px;
-  border-radius: 2px;
-  outline: none;
-  padding: 0px;
+  padding: 0px 24px;
 }
 
 
@@ -93,44 +105,48 @@
   color: white;
 }
 
+.jp-Dialog-warningButton {
+  background: var(--jp-error-color1);
+  color: white;
+}
 
 .jp-Dialog-inputWrapper {
-  padding: 7px;
+  display: flex;
   background: white;
   width: 252px;
   box-sizing: border-box;
   border: var(--jp-border-width) solid var(--jp-border-color1);
-  border-radius: 2px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+  padding: 1px;
 }
 
 
 .jp-Dialog-input {
+  flex: 1 1 auto;
+  padding: 7px;
   font-size: 15px;
   color: #676767;
-  width: 100%;
-  outline: none;
   border: none;
 }
 
 
 .jp-Dialog-selectWrapper {
-  padding-top: 6px;
-  padding-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  padding: 1px;
   background: white;
   width: 252px;
   box-sizing: border-box;
   border: var(--jp-border-width) solid var(--jp-border-color1);
-  border-radius: 2px;
   margin-bottom: 12px;
 }
 
 
 .jp-Dialog-select {
+  flex: 1 1 auto;
+  height: 32px;
   font-size: 15px;
   background: white;
   color: #676767;
-  width: 100%;
-  outline: none;
   border: none;
 }

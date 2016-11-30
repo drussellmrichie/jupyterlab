@@ -2,20 +2,20 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  createTerminalSession
-} from 'jupyter-js-services';
-
-import {
-  TerminalWidget
-} from 'jupyterlab/lib/terminal';
-
-import {
   DockPanel
 } from 'phosphor/lib/ui/dockpanel';
 
 import {
   Widget
 } from 'phosphor/lib/ui/widget';
+
+import {
+  TerminalSession
+} from '@jupyterlab/services';
+
+import {
+  TerminalWidget
+} from 'jupyterlab/lib/terminal';
 
 import 'jupyterlab/lib/default-theme/index.css';
 import '../index.css';
@@ -31,8 +31,8 @@ function main(): void {
     color: 'black'
   });
 
-  createTerminalSession().then(session => term1.session = session);
-  createTerminalSession().then(session => term2.session = session);
+  TerminalSession.startNew().then(session => { term1.session = session; });
+  TerminalSession.startNew().then(session => { term2.session = session; });
 
   term1.title.closable = true;
   term2.title.closable = true;

@@ -18,7 +18,7 @@ from jupyter_core.paths import (
 )
 from ipython_genutils.path import ensure_dir_exists
 from ipython_genutils.py3compat import string_types, cast_unicode_py2
-from . import __version__
+from ._version import __version__
 
 from traitlets.config.manager import BaseJSONConfigManager
 from traitlets.utils.importstring import import_item
@@ -26,16 +26,17 @@ from traitlets.utils.importstring import import_item
 from tornado.log import LogFormatter
 
 from . import (
-    get_labextension_manifest_data_by_folder,
+    get_labextension_manifest_data_by_folder, semver
 )
 
 # Constants for pretty print extension listing function.
 # Window doesn't support coloring in the commandline
-GREEN_ENABLED = '\033[32m enabled \033[0m' if os.name != 'nt' else 'enabled '
+GREEN_OK = '\033[32mOK\033[0m' if os.name != 'nt' else 'ok'
+RED_X = '\033[31mX\033[0m' if os.name != 'nt' else 'X'
+
+GREEN_ENABLED = '\033[32menabled \033[0m' if os.name != 'nt' else 'enabled '
 RED_DISABLED = '\033[31mdisabled\033[0m' if os.name != 'nt' else 'disabled'
 
-GREEN_OK = '\033[32mOK\033[0m' if os.name != 'nt' else 'ok'
-RED_X = '\033[31m X\033[0m' if os.name != 'nt' else ' X'
 
 #------------------------------------------------------------------------------
 # Public API
@@ -306,7 +307,8 @@ def _set_labextension_state(name, state,
     cm.update("jupyterlab_config", cfg)
 
     if new_enabled:
-        validate_labextension(name, logger=logger)
+        full_dest = find_labextension(name)
+        validate_labextension_folder(name, full_dest, logger=logger)
 
     return old_enabled == state
 
@@ -435,25 +437,24 @@ def disable_labextension_python(module, user=True, sys_prefix=False,
     return _set_labextension_state_python(False, module, user, sys_prefix,
                                          logger=logger)
 
-
-def validate_labextension(name, logger=None):
-    """Validate a named labextension.
+def find_labextension(name):
+    """Find a labextension path
 
     Looks across all of the labextension directories.
 
-    Returns a list of warnings.
+    Returns the first path where the extension is found,
+    or None if not found.
 
     Parameters
     ----------
     name : str
         The name of the extension.
-    logger : Jupyter logger [optional]
-        Logger instance to use
     """
     for exts in _labextension_dirs():
         full_dest = os.path.join(exts, name)
         if os.path.exists(full_dest):
-            return validate_labextension_folder(name, full_dest, logger)
+            return full_dest
+    return None
 
 
 def validate_labextension_folder(name, full_dest, logger=None):
@@ -469,46 +470,66 @@ def validate_labextension_folder(name, full_dest, logger=None):
     logger : Jupyter logger [optional]
         Logger instance to use
     """
-    if logger:
-        logger.info("    - Validating...")
-
     infos = []
     warnings = []
 
-    hasFiles = True
-    hasEntry = False
+    has_files = []
+    has_entry = False
+    version_compatible = []
+
     data = get_labextension_manifest_data_by_folder(full_dest)
     for manifest in data.values():
         if ('entry' in manifest and 'modules' in manifest):
             if (manifest['entry'] in manifest['modules']):
-                hasEntry = True
+                has_entry = True
         files = manifest.get('files', [])
         if not files:
-            hasFiles = False
-        for fname in files:
-            path = os.path.join(full_dest, fname)
-            if not os.path.exists(path):
-                hasFiles = False
-    entry_msg = u"     {} has {} entry point?"
-    name = os.path.basename(full_dest)
-    if hasEntry:
-        (entry_msg.format(GREEN_OK, name))
-    else:
-        warnings.append(entry_msg.format(RED_X, name))
-
-    files_msg = u"     {} has necessary files?"
-    if hasFiles:
-        infos.append(files_msg.format(GREEN_OK, name))
-    else:
-        warnings.append(files_msg.format(RED_X, name))
-
-    post_mortem = u"      {} {} {}"
-    if logger:
-        if warnings:
-            [logger.info(info) for info in infos]
-            [logger.warn(warning) for warning in warnings]
+            has_files.append("No 'files' key in manifest")
         else:
-            logger.info(post_mortem.format(name, "", GREEN_OK))
+            for fname in files:
+                path = os.path.join(full_dest, fname)
+                if not os.path.exists(path):
+                    has_files.append("File in manifest does not exist: {}".format(path))
+
+        for (mod, deps) in manifest.get('modules', {}).items():
+            # ignore jupyterlab modules since
+            # they are only semver compatibile with their own version
+            if mod.startswith('jupyterlab@'):
+                continue
+            for dep in deps:
+                if dep.startswith('jupyterlab@'):
+                    dep = dep.split('/')[0].split('@')[-1]
+                    if not semver.satisfies(__version__, dep, False):
+                        version_compatible.append('Expects JupyterLab version %s from packaged module %s'%(dep, mod))
+                        break
+
+    indent = "        "
+    subindent = indent + "    "
+    entry_msg = indent + u"{} has entry point in manifest"
+    name = os.path.basename(full_dest)
+    if has_entry:
+        infos.append(entry_msg.format(GREEN_OK))
+    else:
+        warnings.append(entry_msg.format(RED_X))
+
+    files_msg = indent+u"{} has necessary files"
+    if len(has_files)==0:
+        infos.append(files_msg.format(GREEN_OK))
+    else:
+        warnings.append(files_msg.format(RED_X))
+        for m in has_files:
+            warnings.append(subindent+m)
+
+    if len(version_compatible)==0:
+        infos.append(indent+"{} is version compatible with installed JupyterLab version {}".format(GREEN_OK, __version__))
+    else:
+        warnings.append(indent+"{} is not version compatible with installed JupyterLab version {}".format(RED_X, __version__))
+        for m in version_compatible:
+            warnings.append(subindent+m)
+
+    if logger and warnings:
+            #[logger.info(info) for info in infos]
+            [logger.warn(warning) for warning in warnings]
 
     return warnings
 
@@ -837,11 +858,15 @@ class ListLabExtensionsApp(BaseLabExtensionApp):
             )
             if labextensions:
                 print(u'config dir: {}'.format(config_dir))
-            for name, enabled in labextensions.items():
-                print(u'    {} {}'.format(
+            for name, enabled in sorted(labextensions.items()):
+                full_dest = find_labextension(name)
+                print(u'    {} {}: {}'.format(
                               name,
-                              GREEN_ENABLED if enabled else RED_DISABLED))
-                validate_labextension(name, self.log)
+                              GREEN_ENABLED if enabled else RED_DISABLED,
+                              full_dest if not None else RED_X+" Files not found"
+                              ))
+                if full_dest is not None:
+                    validate_labextension_folder(name, full_dest, self.log)
 
     def start(self):
         """Perform the App's functions as configured"""

@@ -1,6 +1,20 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
+
+import {
+  Message
+} from 'phosphor/lib/core/messaging';
+
+import {
+  Panel
+} from 'phosphor/lib/ui/panel';
+
+
+import {
+  Widget
+} from 'phosphor/lib/ui/widget';
+
 /**
  * The class name added to dialog instances.
  */
@@ -62,6 +76,11 @@ const OK_BUTTON_CLASS = 'jp-Dialog-okButton';
 const CANCEL_BUTTON_CLASS = 'jp-Dialog-cancelButton';
 
 /**
+ * The class name added to dialog Warning buttons.
+ */
+const WARNING_BUTTON_CLASS = 'jp-Dialog-warningButton';
+
+/**
  * The class name added to dialog input field wrappers.
  */
 const INPUT_WRAPPER_CLASS = 'jp-Dialog-inputWrapper';
@@ -113,7 +132,6 @@ const okButton: IButtonItem = {
   className: OK_BUTTON_CLASS
 };
 
-
 /**
  * A default cancel button.
  */
@@ -121,6 +139,24 @@ export
 const cancelButton: IButtonItem = {
   text: 'CANCEL',
   className: CANCEL_BUTTON_CLASS
+};
+
+/**
+ * A default delete button.
+ */
+export
+const deleteButton: IButtonItem = {
+  text: 'DELETE',
+  className: WARNING_BUTTON_CLASS
+};
+
+/**
+ * A default warn button.
+ */
+export
+const warnButton: IButtonItem = {
+  text: 'OK',
+  className: WARNING_BUTTON_CLASS
 };
 
 
@@ -142,7 +178,7 @@ interface IDialogOptions {
    * a `<span>`.  If an `<input>` or `<select>` element is provided,
    * they will be styled.
    */
-  body?: HTMLElement | string;
+  body?: Widget | HTMLElement | string;
 
   /**
    * The host element for the dialog (defaults to `document.body`).
@@ -150,7 +186,7 @@ interface IDialogOptions {
   host?: HTMLElement;
 
   /**
-   * A list of button times to display (defaults to [[okButton]] and
+   * A list of button types to display (defaults to [[okButton]] and
    *   [[cancelButton]]).
    */
   buttons?: IButtonItem[];
@@ -159,6 +195,18 @@ interface IDialogOptions {
    * The confirmation text for the OK button (defaults to 'OK').
    */
   okText?: string;
+
+  /**
+   * An additional CSS class to apply to the dialog.
+   */
+  dialogClass?: string;
+
+  /**
+   * The primary element or button index that should take focus in the dialog.
+   *
+   * The default is the last button.
+   */
+   primary?: HTMLElement | number;
 }
 
 
@@ -167,7 +215,7 @@ interface IDialogOptions {
  *
  * @param options - The dialog setup options.
  *
- * @returns The button item that was selected.
+ * @returns A promise that resolves to the button item that was selected.
  */
 export
 function showDialog(options?: IDialogOptions): Promise<IButtonItem> {
@@ -175,72 +223,259 @@ function showDialog(options?: IDialogOptions): Promise<IButtonItem> {
   let host = options.host || document.body;
   options.host = host;
   options.body = options.body || '';
+  // NOTE: This code assumes only one dialog is shown at the time:
   okButton.text = options.okText ? options.okText : 'OK';
-  let buttons = options.buttons || [cancelButton, okButton];
-  let buttonNodes = buttons.map(createButton);
-  let dialog = createDialog(options, buttonNodes);
-  host.appendChild(dialog);
-  // Focus the ok button if given.
-  let index = buttons.indexOf(okButton);
-  if (index !== -1) {
-    buttonNodes[index].focus();
+  options.buttons = options.buttons || [cancelButton, okButton];
+  if (!options.buttons.length) {
+    options.buttons = [okButton];
+  }
+  if (!(options.body instanceof Widget)) {
+    options.body = createDialogBody(options.body);
   }
   return new Promise<IButtonItem>((resolve, reject) => {
-    buttonNodes.map(node => {
-      node.addEventListener('click', evt => {
-        if (node.contains(evt.target as HTMLElement)) {
-          host.removeChild(dialog);
-          let button = buttons[buttonNodes.indexOf(node)];
-          resolve(button);
-        }
-      });
-    });
-    dialog.addEventListener('keydown', evt => {
-      // Check for escape key
-      if (evt.keyCode === 27) {
-        host.removeChild(dialog);
-        resolve(cancelButton);
-      }
-    }, true);
-    dialog.addEventListener('contextmenu', evt => {
-      evt.preventDefault();
-      evt.stopPropagation();
-    }, true);
+    let dialog = new Dialog(options, resolve, reject);
+    Widget.attach(dialog, host);
   });
 }
 
 
 /**
- * Create the dialog node.
+ * A dialog panel.
  */
-function createDialog(options: IDialogOptions, buttonNodes: HTMLElement[]): HTMLElement {
-  // Create the dialog nodes (except for the buttons).
-  let node = document.createElement('div');
-  let content = document.createElement('div');
-  let header = document.createElement('div');
-  let body = document.createElement('div');
-  let footer = document.createElement('div');
-  let title = document.createElement('span');
-  node.className = DIALOG_CLASS;
-  content.className = CONTENT_CLASS;
-  header.className = HEADER_CLASS;
-  body.className = BODY_CLASS;
-  footer.className = FOOTER_CLASS;
-  title.className = TITLE_CLASS;
-  node.appendChild(content);
-  content.appendChild(header);
-  content.appendChild(body);
-  content.appendChild(footer);
-  header.appendChild(title);
+class Dialog extends Panel {
+  /**
+   * Create a dialog panel instance.
+   *
+   * @param options - The dialog setup options.
+   *
+   * @param resolve - The function that resolves the dialog promise.
+   *
+   * @param reject - The function that rejects the dialog promise.
+   *
+   * #### Notes
+   * Currently the dialog resolves with `cancelButton` rather than
+   * rejecting the dialog promise.
+   */
+  constructor(options: IDialogOptions, resolve: (value: IButtonItem) => void, reject?: (error: any) => void) {
+    super();
 
-  // Populate the nodes.
-  title.textContent = options.title || '';
+    if (!(options.body instanceof Widget)) {
+      throw 'A widget dialog can only be created with a widget as its body.';
+    }
+
+    this.resolve = resolve;
+    this.reject = reject;
+
+    // Create the dialog nodes (except for the buttons).
+    let content = new Panel();
+    let header = new Widget({node: document.createElement('div')});
+    let body = new Panel();
+    let footer = new Widget({node: document.createElement('div')});
+    let title = document.createElement('span');
+    this.addClass(DIALOG_CLASS);
+    if (options.dialogClass) {
+      this.addClass(options.dialogClass);
+    }
+    content.addClass(CONTENT_CLASS);
+    header.addClass(HEADER_CLASS);
+    body.addClass(BODY_CLASS);
+    footer.addClass(FOOTER_CLASS);
+    title.className = TITLE_CLASS;
+    this.addWidget(content);
+    content.addWidget(header);
+    content.addWidget(body);
+    content.addWidget(footer);
+    header.node.appendChild(title);
+
+    // Populate the nodes.
+    title.textContent = options.title || '';
+    let child = options.body as Widget;
+    child.addClass(BODY_CONTENT_CLASS);
+    body.addWidget(child);
+    this._buttons = options.buttons;
+    this._buttonNodes = options.buttons.map(createButton);
+    this._buttonNodes.map(buttonNode => {
+      footer.node.appendChild(buttonNode);
+    });
+    let primary = options.primary || this.lastButtonNode;
+    if (typeof primary === 'number') {
+      primary = this._buttonNodes[primary];
+    }
+    this._primary = primary as HTMLElement;
+  }
+
+  /**
+   * Get the last button node.
+   */
+  get lastButtonNode(): HTMLButtonElement {
+    return this._buttonNodes[this._buttons.length - 1];
+  }
+
+  /**
+   * Handle the DOM events for the directory listing.
+   *
+   * @param event - The DOM event sent to the widget.
+   *
+   * #### Notes
+   * This method implements the DOM `EventListener` interface and is
+   * called in response to events on the panel's DOM node. It should
+   * not be called directly by user code.
+   */
+  handleEvent(event: Event): void {
+    switch (event.type) {
+    case 'keydown':
+      this._evtKeydown(event as KeyboardEvent);
+      break;
+    case 'contextmenu':
+      this._evtContextMenu(event as MouseEvent);
+      break;
+    case 'click':
+      this._evtClick(event as MouseEvent);
+      break;
+    case 'focus':
+      if (!this.node.contains(event.target as HTMLElement)) {
+        event.stopPropagation();
+        this.lastButtonNode.focus();
+      }
+      break;
+    default:
+      break;
+    }
+  }
+
+  /**
+   * Handle an `'after-attach'` message to the widget.
+   *
+   * @param msg - The `'after-attach'` message
+   */
+  protected onAfterAttach(msg: Message): void {
+    let node = this.node;
+    node.addEventListener('keydown', this, true);
+    node.addEventListener('contextmenu', this, true);
+    node.addEventListener('click', this, true);
+    document.addEventListener('focus', this, true);
+    this._original = document.activeElement as HTMLElement;
+    this._primary.focus();
+  }
+
+
+  /**
+   * Handle a `'before-detach'` message to the widget.
+   *
+   * @param msg - The `'after-attach'` message
+   */
+  protected onBeforeDetach(msg: Message): void {
+    let node = this.node;
+    node.removeEventListener('keydown', this, true);
+    node.removeEventListener('contextmenu', this, true);
+    node.removeEventListener('click', this, true);
+    document.removeEventListener('focus', this, true);
+    this._original.focus();
+  }
+
+  /**
+   * Handle the `'click'` event for a dialog button.
+   *
+   * @param event - The DOM event sent to the widget
+   */
+  protected _evtClick(event: MouseEvent): void {
+    let content = this.node.getElementsByClassName(CONTENT_CLASS)[0] as HTMLElement;
+    if (!content.contains(event.target as HTMLElement)) {
+      this.close();
+      this.resolve(cancelButton);
+      event.stopPropagation();
+      return;
+    }
+    for (let buttonNode of this._buttonNodes) {
+      if (buttonNode.contains(event.target as HTMLElement)) {
+        this.close();
+        let button = this._buttons[this._buttonNodes.indexOf(buttonNode)];
+        this.resolve(button);
+      }
+    }
+  }
+
+  /**
+   * Handle the `'keydown'` event for the widget.
+   *
+   * @param event - The DOM event sent to the widget
+   */
+  protected _evtKeydown(event: KeyboardEvent): void {
+    // Check for escape key
+    switch (event.keyCode) {
+    case 27:
+      this.close();
+      this.resolve(cancelButton);
+      break;
+    case 9:
+      // Handle a tab on the last button.
+      if (document.activeElement === this.lastButtonNode && !event.shiftKey) {
+        event.stopPropagation();
+        event.preventDefault();
+        if (!this._first) {
+          this._findFirst();
+        }
+        this._first.focus();
+      }
+      break;
+    default:
+      break;
+    }
+  }
+
+  /**
+   * Handle the `'contextmenu'` event for the widget.
+   *
+   * @param event - The DOM event sent to the widget
+   */
+  protected _evtContextMenu(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  /**
+   * Find the first focusable item in the dialog.
+   */
+  private _findFirst(): void {
+    let candidateSelectors = [
+      'input',
+      'select',
+      'a[href]',
+      'textarea',
+      'button',
+      '[tabindex]',
+    ].join(',');
+
+    this._first = this.node.querySelectorAll(candidateSelectors)[0] as HTMLElement;
+  }
+  /**
+   * The resolution function of the dialog Promise.
+   */
+  protected resolve: (value: IButtonItem) => void;
+
+  /**
+   * The rejection function of the dialog Promise.
+   */
+  protected reject: (error: any) => void;
+
+  private _buttonNodes: HTMLButtonElement[];
+  private _buttons: IButtonItem[];
+  private _original: HTMLElement;
+  private _first: HTMLElement;
+  private _primary: HTMLElement;
+}
+
+
+/**
+ * Create a dialog body widget from a non-widget input.
+ */
+function createDialogBody(body: HTMLElement | string): Widget {
   let child: HTMLElement;
-  if (typeof options.body === 'string') {
+  if (typeof body === 'string') {
     child = document.createElement('span');
-    child.innerHTML = options.body as string;
-  } else if (options.body) {
-    child = options.body as HTMLElement;
+    child.innerHTML = body as string;
+  } else if (body) {
+    child = body as HTMLElement;
     switch (child.tagName) {
     case 'INPUT':
       child = wrapInput(child as HTMLInputElement);
@@ -254,9 +489,7 @@ function createDialog(options: IDialogOptions, buttonNodes: HTMLElement[]): HTML
     }
   }
   child.classList.add(BODY_CONTENT_CLASS);
-  body.appendChild(child);
-  buttonNodes.map(buttonNode => { footer.appendChild(buttonNode); });
-  return node;
+  return new Widget({node: child});
 }
 
 
@@ -287,10 +520,10 @@ function styleElements(element: HTMLElement): HTMLElement {
 /**
  * Create a node for a button item.
  */
-function createButton(item: IButtonItem): HTMLElement {
-  let button = document.createElement('button');
+function createButton(item: IButtonItem): HTMLButtonElement {
+  let button = document.createElement('button') as HTMLButtonElement;
   button.className = BUTTON_CLASS;
-  button.tabIndex = -1;
+  button.tabIndex = 0;
   if (item.className) {
     button.classList.add(item.className);
   }
@@ -316,6 +549,7 @@ function wrapInput(input: HTMLInputElement): HTMLElement {
   wrapper.className = INPUT_WRAPPER_CLASS;
   wrapper.appendChild(input);
   input.classList.add(INPUT_CLASS);
+  input.tabIndex = 0;
   return wrapper;
 }
 
@@ -328,5 +562,6 @@ function wrapSelect(select: HTMLSelectElement): HTMLElement {
   wrapper.className = SELECT_WRAPPER_CLASS;
   wrapper.appendChild(select);
   select.classList.add(SELECT_CLASS);
+  select.tabIndex = 0;
   return wrapper;
 }

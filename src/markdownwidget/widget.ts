@@ -2,10 +2,6 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IKernel
-} from 'jupyter-js-services';
-
-import {
   Message
 } from 'phosphor/lib/core/messaging';
 
@@ -22,7 +18,7 @@ import {
 } from '../common/activitymonitor';
 
 import {
-  IDocumentModel, IDocumentContext, ABCWidgetFactory
+  DocumentRegistry, ABCWidgetFactory
 } from '../docregistry';
 
 import {
@@ -49,7 +45,7 @@ class MarkdownWidget extends Widget {
   /**
    * Construct a new markdown widget.
    */
-  constructor(context: IDocumentContext<IDocumentModel>, rendermime: RenderMime) {
+  constructor(context: DocumentRegistry.Context, rendermime: RenderMime) {
     super();
     this.addClass(MD_CLASS);
     this.layout = new PanelLayout();
@@ -71,11 +67,26 @@ class MarkdownWidget extends Widget {
   }
 
   /**
+   * The markdown widget's context.
+   */
+  get context(): DocumentRegistry.Context {
+    return this._context;
+  }
+
+  /**
    * Dispose of the resources held by the widget.
    */
   dispose(): void {
     this._monitor.dispose();
     super.dispose();
+  }
+
+  /**
+   * Handle `'activate-request'` messages.
+   */
+  protected onActivateRequest(msg: Message): void {
+    this.node.tabIndex = -1;
+    this.node.focus();
   }
 
   /**
@@ -100,7 +111,7 @@ class MarkdownWidget extends Widget {
     layout.addWidget(widget);
   }
 
-  private _context: IDocumentContext<IDocumentModel> = null;
+  private _context: DocumentRegistry.Context = null;
   private _monitor: ActivityMonitor<any, any> = null;
   private _rendermime: RenderMime = null;
 }
@@ -110,23 +121,39 @@ class MarkdownWidget extends Widget {
  * A widget factory for Markdown.
  */
 export
-class MarkdownWidgetFactory extends ABCWidgetFactory<MarkdownWidget, IDocumentModel> {
+class MarkdownWidgetFactory extends ABCWidgetFactory<MarkdownWidget, DocumentRegistry.IModel> {
   /**
    * Construct a new markdown widget factory.
    */
-  constructor(rendermime: RenderMime) {
-    super();
-    this._rendermime = rendermime;
+  constructor(options: MarkdownWidgetFactory.IOptions) {
+    super(options);
+    this._rendermime = options.rendermime;
   }
 
   /**
    * Create a new widget given a context.
    */
-  createNew(context: IDocumentContext<IDocumentModel>, kernel?: IKernel.IModel): MarkdownWidget {
-    let widget = new MarkdownWidget(context, this._rendermime.clone());
-    this.widgetCreated.emit(widget);
-    return widget;
+  protected createNewWidget(context: DocumentRegistry.Context): MarkdownWidget {
+    return new MarkdownWidget(context, this._rendermime.clone());
   }
 
   private _rendermime: RenderMime = null;
+}
+
+
+/**
+ * A namespace for `MarkdownWidgetFactory` statics.
+ */
+export
+namespace MarkdownWidgetFactory {
+  /**
+   * The options used to create a markdown widget factory.
+   */
+  export
+  interface IOptions extends DocumentRegistry.IWidgetFactoryOptions {
+    /**
+     * A rendermime instance.
+     */
+    rendermime: RenderMime;
+  }
 }

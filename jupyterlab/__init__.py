@@ -12,6 +12,12 @@ from jinja2 import FileSystemLoader
 from notebook.utils import url_path_join as ujoin
 
 
+try:
+    from ._version import __version__
+except ImportError as e:
+    # when we are python 3 only, add 'from e' at the end to chain the exception.
+    raise ImportError("No module named 'jupyter._version'. Build the jupyterlab package to generate this module, for example, with `pip install -e /path/to/jupyterlab/repo`.")
+
 #-----------------------------------------------------------------------------
 # Module globals
 #-----------------------------------------------------------------------------
@@ -21,8 +27,8 @@ If you're working on the TypeScript sources of JupyterLab, try running
 
     npm run watch
 
-from the JupyterLab repo directory in another terminal window to have the 
-system incrementally watch and build JupyterLab's TypeScript for you, as you 
+from the JupyterLab repo directory in another terminal window to have the
+system incrementally watch and build JupyterLab's TypeScript for you, as you
 make changes.
 """
 
@@ -31,7 +37,6 @@ FILE_LOADER = FileSystemLoader(HERE)
 BUILT_FILES = os.path.join(HERE, 'build')
 PREFIX = '/lab'
 EXTENSION_PREFIX = '/labextension'
-__version__ = None
 
 
 def get_labextension_manifest_data_by_folder(folder):
@@ -63,14 +68,28 @@ class LabHandler(IPythonHandler):
     def get(self):
         static_prefix = ujoin(self.base_url, PREFIX)
         labextensions = self.application.labextensions
-
         data = get_labextension_manifest_data_by_folder(BUILT_FILES)
-        css_files = [ujoin(static_prefix, 'main.css'),
-                     ujoin(static_prefix, 'extensions.css')]
+        if 'main' not in data or 'extensions' not in data:
+            msg = ('JupyterLab build artifacts not detected, please see ' + 
+                   'CONTRIBUTING.md for build instructions.')
+            self.log.error(msg)
+            self.write(self.render_template('error.html', 
+                       status_code=500, 
+                       status_message='JupyterLab Error',
+                       page_title='JupyterLab Error',
+                       message=msg))
+            return
+
         main = data['main']['entry']
         bundles = [ujoin(static_prefix, name + '.bundle.js') for name in
                    ['loader', 'main', 'extensions']]
         entries = [data['extensions']['entry']]
+
+        # Only load CSS files if they exist.
+        css_files = []
+        for css_file in ['main.css', 'extensions.css']:
+            if os.path.isfile(os.path.join(BUILT_FILES, css_file)):
+                css_files.append(ujoin(static_prefix, css_file))
 
         # Gather the lab extension files and entry points.
         for name in labextensions:

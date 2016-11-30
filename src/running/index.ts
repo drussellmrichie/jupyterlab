@@ -2,8 +2,8 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IServiceManager, ISession, ITerminalSession
-} from 'jupyter-js-services';
+  ServiceManager, Session, TerminalSession
+} from '@jupyterlab/services';
 
 import {
   Message
@@ -87,11 +87,6 @@ const ITEM_ICON_CLASS = 'jp-RunningSessions-itemIcon';
 const ITEM_LABEL_CLASS = 'jp-RunningSessions-itemLabel';
 
 /**
- * The class name added to a running session item kernel name.
- */
-const KERNEL_NAME_CLASS = 'jp-RunningSessions-itemKernelName';
-
-/**
  * The class name added to a running session item shutdown button.
  */
 const SHUTDOWN_BUTTON_CLASS = 'jp-RunningSessions-itemShutdown';
@@ -100,6 +95,11 @@ const SHUTDOWN_BUTTON_CLASS = 'jp-RunningSessions-itemShutdown';
  * The class name added to a notebook icon.
  */
 const NOTEBOOK_ICON_CLASS = 'jp-mod-notebook';
+
+/**
+ * The class name added to a console icon.
+ */
+const CONSOLE_ICON_CLASS = 'jp-mod-console';
 
 /**
  * The class name added to a file icon.
@@ -112,9 +112,10 @@ const FILE_ICON_CLASS = 'jp-mod-file';
 const TERMINAL_ICON_CLASS = 'jp-mod-terminal';
 
 /**
- * The duration of auto-refresh in ms.
+ * A regex for console names.
  */
-const REFRESH_DURATION = 10000;
+export
+const CONSOLE_REGEX = /^console-(\d)+-[0-9a-f]+$/;
 
 
 /**
@@ -134,16 +135,20 @@ class RunningSessions extends Widget {
     this.addClass(RUNNING_CLASS);
 
     // Populate the terminals section.
-    let termNode = findElement(this.node, TERMINALS_CLASS);
-    let termHeader = this._renderer.createTerminalHeaderNode();
-    termHeader.className = SECTION_HEADER_CLASS;
-    termNode.appendChild(termHeader);
-    let termContainer = document.createElement('div');
-    termContainer.className = CONTAINER_CLASS;
-    let termList = document.createElement('ul');
-    termList.className = LIST_CLASS;
-    termContainer.appendChild(termList);
-    termNode.appendChild(termContainer);
+    if (manager.terminals.isAvailable()) {
+      let termNode = findElement(this.node, TERMINALS_CLASS);
+      let termHeader = this._renderer.createTerminalHeaderNode();
+      termHeader.className = SECTION_HEADER_CLASS;
+      termNode.appendChild(termHeader);
+      let termContainer = document.createElement('div');
+      termContainer.className = CONTAINER_CLASS;
+      let termList = document.createElement('ul');
+      termList.className = LIST_CLASS;
+      termContainer.appendChild(termList);
+      termNode.appendChild(termContainer);
+
+      manager.terminals.runningChanged.connect(this._onTerminalsChanged, this);
+    }
 
     // Populate the sessions section.
     let sessionNode = findElement(this.node, SESSIONS_CLASS);
@@ -157,19 +162,18 @@ class RunningSessions extends Widget {
     sessionContainer.appendChild(sessionList);
     sessionNode.appendChild(sessionContainer);
 
-    manager.terminals.runningChanged.connect(this._onTerminalsChanged, this);
     manager.sessions.runningChanged.connect(this._onSessionsChanged, this);
   }
 
   /**
    * A signal emitted when a kernel session open is requested.
    */
-  sessionOpenRequested: ISignal<RunningSessions, ISession.IModel>;
+  sessionOpenRequested: ISignal<RunningSessions, Session.IModel>;
 
   /**
    * A signal emitted when a terminal session open is requested.
    */
-  terminalOpenRequested: ISignal<RunningSessions, ITerminalSession.IModel>;
+  terminalOpenRequested: ISignal<RunningSessions, TerminalSession.IModel>;
 
   /**
    * The renderer used by the running sessions widget.
@@ -211,15 +215,12 @@ class RunningSessions extends Widget {
     let terminals = this._manager.terminals;
     let sessions = this._manager.sessions;
     clearTimeout(this._refreshId);
-    return terminals.listRunning().then(running => {
-      this._onTerminalsChanged(terminals, running);
-      return sessions.listRunning();
-    }).then(running => {
-      this._onSessionsChanged(sessions, running);
-      this._refreshId = setTimeout(() => {
-        this.refresh();
-      }, REFRESH_DURATION);
-    });
+    let promises: Promise<void>[] = [];
+    if (terminals.isAvailable()) {
+      promises.push(terminals.refreshRunning());
+    }
+    promises.push(sessions.refreshRunning());
+    return Promise.all(promises);
   }
 
   /**
@@ -243,7 +244,6 @@ class RunningSessions extends Widget {
    */
   protected onAfterAttach(msg: Message): void {
     this.node.addEventListener('click', this);
-    this.refresh();
   }
 
   /**
@@ -263,7 +263,7 @@ class RunningSessions extends Widget {
     let sessionSection = findElement(this.node, SESSIONS_CLASS);
     let sessionList = findElement(sessionSection, LIST_CLASS);
     let renderer = this._renderer;
-    let kernelspecs = this._manager.kernelspecs.kernelspecs;
+    let specs = this._manager.specs;
 
     // Remove any excess item nodes.
     while (termList.children.length > this._runningTerminals.length) {
@@ -293,7 +293,10 @@ class RunningSessions extends Widget {
     for (let i = 0; i < this._runningSessions.length; i++) {
       let node = sessionList.children[i] as HTMLLIElement;
       let model = this._runningSessions[i];
-      let kernelName = kernelspecs[model.kernel.name].spec.display_name;
+      let kernelName = model.kernel.name;
+      if (specs) {
+        kernelName = specs.kernelspecs[kernelName].display_name;
+      }
       renderer.updateSessionNode(node, model, kernelName);
     }
   }
@@ -317,7 +320,6 @@ class RunningSessions extends Widget {
 
     // Check for a refresh.
     if (hitTest(refresh, clientX, clientY)) {
-      this.refresh();
       return;
     }
 
@@ -328,9 +330,7 @@ class RunningSessions extends Widget {
       let shutdown = renderer.getTerminalShutdown(node);
       let model = this._runningTerminals[index];
       if (hitTest(shutdown, clientX, clientY)) {
-        this._manager.terminals.shutdown(model.name).then(() => {
-          this.refresh();
-        });
+        this._manager.terminals.shutdown(model.name);
         return;
       }
       this.terminalOpenRequested.emit(model);
@@ -343,9 +343,7 @@ class RunningSessions extends Widget {
       let shutdown = renderer.getSessionShutdown(node);
       let model = this._runningSessions[index];
       if (hitTest(shutdown, clientX, clientY)) {
-        this._manager.sessions.shutdown(model.id).then(() => {
-          this.refresh();
-        });
+        this._manager.sessions.shutdown(model.id);
         return;
       }
       this.sessionOpenRequested.emit(model);
@@ -355,12 +353,12 @@ class RunningSessions extends Widget {
   /**
    * Handle a change to the running sessions.
    */
-  private _onSessionsChanged(sender: ISession.IManager, models: ISession.IModel[]): void {
+  private _onSessionsChanged(sender: Session.IManager, models: Session.IModel[]): void {
     // Strip out non-file backed sessions.
     this._runningSessions = [];
     for (let session of models) {
       let name = session.notebook.path.split('/').pop();
-      if (name.indexOf('.') !== -1) {
+      if (name.indexOf('.') !== -1 || CONSOLE_REGEX.test(name)) {
         this._runningSessions.push(session);
       }
     }
@@ -370,15 +368,15 @@ class RunningSessions extends Widget {
   /**
    * Handle a change to the running terminals.
    */
-  private _onTerminalsChanged(sender: ITerminalSession.IManager, models: ITerminalSession.IModel[]): void {
+  private _onTerminalsChanged(sender: TerminalSession.IManager, models: TerminalSession.IModel[]): void {
     this._runningTerminals = models;
     this.update();
   }
 
-  private _manager: IServiceManager = null;
+  private _manager: ServiceManager.IManager = null;
   private _renderer: RunningSessions.IRenderer = null;
-  private _runningSessions: ISession.IModel[] = [];
-  private _runningTerminals: ITerminalSession.IModel[] = [];
+  private _runningSessions: Session.IModel[] = [];
+  private _runningTerminals: TerminalSession.IModel[] = [];
   private _refreshId = -1;
 }
 
@@ -401,7 +399,7 @@ namespace RunningSessions {
     /**
      * A service manager instance.
      */
-    manager: IServiceManager;
+    manager: ServiceManager.IManager;
 
     /**
      * The renderer for the running sessions widget.
@@ -496,7 +494,7 @@ namespace RunningSessions {
      * This method should completely reset the state of the node to
      * reflect the data for the session models.
      */
-    updateTerminalNode(node: HTMLLIElement, model: ITerminalSession.IModel): void;
+    updateTerminalNode(node: HTMLLIElement, model: TerminalSession.IModel): void;
 
     /**
      * Populate a node with running kernel session data.
@@ -511,7 +509,7 @@ namespace RunningSessions {
      * This method should completely reset the state of the node to
      * reflect the data for the session models.
      */
-    updateSessionNode(node: HTMLLIElement, model: ISession.IModel, kernelName: string): void;
+    updateSessionNode(node: HTMLLIElement, model: Session.IModel, kernelName: string): void;
   }
 
 
@@ -606,15 +604,12 @@ namespace RunningSessions {
       icon.className = ITEM_ICON_CLASS;
       let label = document.createElement('span');
       label.className = ITEM_LABEL_CLASS;
-      let kernel = document.createElement('span');
-      kernel.className = KERNEL_NAME_CLASS;
       let shutdown = document.createElement('span');
       shutdown.className = SHUTDOWN_BUTTON_CLASS;
       shutdown.textContent = 'SHUTDOWN';
 
       node.appendChild(icon);
       node.appendChild(label);
-      node.appendChild(kernel);
       node.appendChild(shutdown);
       return node;
     }
@@ -660,7 +655,7 @@ namespace RunningSessions {
      * This method should completely reset the state of the node to
      * reflect the data for the session models.
      */
-    updateTerminalNode(node: HTMLLIElement, model: ITerminalSession.IModel): void {
+    updateTerminalNode(node: HTMLLIElement, model: TerminalSession.IModel): void {
       let label = findElement(node, ITEM_LABEL_CLASS);
       label.textContent = `terminals/${model.name}`;
     }
@@ -678,18 +673,25 @@ namespace RunningSessions {
      * This method should completely reset the state of the node to
      * reflect the data for the session models.
      */
-    updateSessionNode(node: HTMLLIElement, model: ISession.IModel, kernelName: string): void {
+    updateSessionNode(node: HTMLLIElement, model: Session.IModel, kernelName: string): void {
       let icon = findElement(node, ITEM_ICON_CLASS);
-      if (model.notebook.path.indexOf('.ipynb') !== -1) {
+      let path = model.notebook.path;
+      let name = path.split('/').pop();
+      if (name.indexOf('.ipynb') !== -1) {
         icon.className = `${ITEM_ICON_CLASS} ${NOTEBOOK_ICON_CLASS}`;
+      } else if (CONSOLE_REGEX.test(name)) {
+        icon.className = `${ITEM_ICON_CLASS} ${CONSOLE_ICON_CLASS}`;
+        path = `Console ${name.match(CONSOLE_REGEX)[1]}`;
       } else {
         icon.className = `${ITEM_ICON_CLASS} ${FILE_ICON_CLASS}`;
       }
       let label = findElement(node, ITEM_LABEL_CLASS);
-      label.textContent = model.notebook.path.split('/').pop();
-      label.title = model.notebook.path;
-      let kernel = findElement(node, KERNEL_NAME_CLASS);
-      kernel.textContent = kernelName;
+      label.textContent = path;
+      let title = (
+        `Path: ${model.notebook.path}\n` +
+        `Kernel: ${kernelName}`
+      );
+      label.title = title;
     }
   }
 

@@ -7,24 +7,40 @@ set -ex
 export DISPLAY=:99.0
 sh -e /etc/init.d/xvfb start || true
 
-# Install in-place and enable the server extension
 export PATH="$HOME/miniconda/bin:$PATH"
+
+# Install and enable the server extension
 pip install -v .
 jupyter serverextension enable --py jupyterlab
 
 npm run clean
 npm run build
-npm test
-npm run test:coverage
+npm test || npm test
+npm run test:coverage || npm run test:coverage
+
 
 # Run the python tests
 npm run build:serverextension
-pushd jupyterlab && nosetests && popd
-
+python setup.py build
+pushd jupyterlab
+nosetests
+popd
 npm run build:examples
 npm run docs
 cp jupyter-plugins-demo.gif docs
 
+# Make sure we have CSS that can be converted with postcss
+npm install -g postcss-cli
+postcss jupyterlab/build/*.css > /dev/null
+
+# Verify docs build
+pushd tutorial
+conda env create -n test_docs -f environment.yml
+source activate test_docs
+make linkcheck
+make html
+source deactivate
+popd
 
 # Make sure we can start and kill the lab server
 jupyter lab --no-browser &

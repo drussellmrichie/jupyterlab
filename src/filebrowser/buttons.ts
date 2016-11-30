@@ -2,8 +2,12 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  IKernel
-} from 'jupyter-js-services';
+  Kernel
+} from '@jupyterlab/services';
+
+import {
+  each
+} from 'phosphor/lib/algorithm/iteration';
 
 import {
   DisposableSet
@@ -32,10 +36,6 @@ import {
 import {
   DocumentManager
 } from '../docmanager';
-
-import {
-  IWidgetOpener
-} from './browser';
 
 import {
   createFromDialog
@@ -102,8 +102,6 @@ export
 class FileButtons extends Widget {
   /**
    * Construct a new file browser buttons widget.
-   *
-   * @param model - The file browser view model.
    */
   constructor(options: FileButtons.IOptions) {
     super();
@@ -123,7 +121,6 @@ class FileButtons extends Widget {
     this._commands = options.commands;
     this._keymap = options.keymap;
     this._manager = options.manager;
-    this._opener = options.opener;
   }
 
   /**
@@ -136,15 +133,11 @@ class FileButtons extends Widget {
     this._keymap = null;
     this._manager = null;
     this._model = null;
-    this._opener = null;
     super.dispose();
   }
 
   /**
    * Get the model used by the widget.
-   *
-   * #### Notes
-   * This is a read-only property.
    */
   get model(): FileBrowserModel {
     return this._model;
@@ -158,42 +151,66 @@ class FileButtons extends Widget {
   }
 
   /**
+   * Get the create button node.
+   */
+  get createNode(): HTMLButtonElement {
+    return this._buttons.create;
+  }
+
+  /**
+   * Get the upload button node.
+   */
+  get uploadNode(): HTMLButtonElement {
+    return this._buttons.upload;
+  }
+
+  /**
+   * Get the refresh button node.
+   */
+  get refreshNode(): HTMLButtonElement {
+    return this._buttons.refresh;
+  }
+
+  /**
    * Create a file from a creator.
+   *
+   * @param creatorName - The name of the file creator.
+   *
+   * @returns A promise that resolves with the created widget.
    */
   createFrom(creatorName: string): Promise<Widget> {
-    return createFromDialog(this.model, this.manager, creatorName).then(widget => {
-      return widget ? this._open(widget) : null;
-    });
+    return createFromDialog(this.model, this.manager, creatorName);
   }
 
   /**
    * Open a file by path.
+   *
+   * @param path - The path of the file.
+   *
+   * @param widgetName - The name of the widget factory to use.
+   *
+   * @param kernel - The kernel model to use.
+   *
+   * @return The widget for the path.
    */
-  open(path: string, widgetName='default', kernel?: IKernel.IModel): Widget {
-    let widget = this._manager.findWidget(path, widgetName);
-    if (!widget) {
-      widget = this._manager.open(path, widgetName, kernel);
-    }
-    return this._open(widget);
+  open(path: string, widgetName='default', kernel?: Kernel.IModel): Widget {
+    let widget = this._manager.openOrReveal(path, widgetName, kernel);
+    return widget;
   }
 
   /**
    * Create a new file by path.
+   *
+   * @param path - The path of the file.
+   *
+   * @param widgetName - The name of the widget factory to use.
+   *
+   * @param kernel - The kernel model to use.
+   *
+   * @return The widget for the path.
    */
-  createNew(path: string, widgetName='default', kernel?: IKernel.IModel): Widget {
-    let widget = this._manager.createNew(path, widgetName, kernel);
-    return this._open(widget);
-  }
-
-  /**
-   * Open a widget and attach listeners.
-   */
-  private _open(widget: Widget): Widget {
-    this._opener.open(widget);
-    let context = this._manager.contextForWidget(widget);
-    context.populated.connect(() => this.model.refresh() );
-    context.kernelChanged.connect(() => this.model.refresh() );
-    return widget;
+  createNew(path: string, widgetName='default', kernel?: Kernel.IModel): Widget {
+    return this._manager.createNew(path, widgetName, kernel);
   }
 
   /**
@@ -255,9 +272,8 @@ class FileButtons extends Widget {
     if (event.button !== 0) {
       return;
     }
-    this._model.refresh().catch(error => {
-      utils.showErrorMessage(this, 'Server Connection Error', error);
-    });
+    // Force a refresh of the current directory.
+    this._model.cd('.');
   };
 
   /**
@@ -274,9 +290,7 @@ class FileButtons extends Widget {
   private _keymap: Keymap = null;
   private _manager: DocumentManager = null;
   private _model: FileBrowserModel;
-  private _opener: IWidgetOpener = null;
 }
-
 
 
 /**
@@ -308,11 +322,6 @@ namespace FileButtons {
      * A document manager instance.
      */
     manager: DocumentManager;
-
-    /**
-     * A widget opener function.
-     */
-    opener: IWidgetOpener;
   }
 }
 
@@ -409,10 +418,8 @@ namespace Private {
    */
   export
   function createNewFolder(widget: FileButtons): void {
-    widget.model.newUntitled({ type: 'directory' }).then(contents => {
-      widget.model.refresh();
-    }).catch(error => {
-      utils.showErrorMessage(widget, 'New Folder Error', error);
+    widget.model.newUntitled({ type: 'directory' }).catch(error => {
+      utils.showErrorMessage('New Folder Error', error);
     });
   }
 
@@ -425,7 +432,6 @@ namespace Private {
     let prefix = `file-buttons-${++id}`;
     let disposables = new DisposableSet();
     let registry = widget.manager.registry;
-    let creators = registry.listCreators();
     let command: string;
 
     // Remove all the commands associated with this menu upon disposal.
@@ -438,7 +444,7 @@ namespace Private {
     }));
     menu.addItem({ command });
 
-    for (let creator of creators) {
+    each(registry.creators(), creator => {
       command = `${prefix}:new-${creator.name}`;
       disposables.add(commands.addCommand(command, {
         execute: () => {
@@ -447,7 +453,7 @@ namespace Private {
         label: creator.name
       }));
       menu.addItem({ command });
-    }
+    });
     return menu;
   }
 
@@ -457,10 +463,8 @@ namespace Private {
   export
   function uploadFiles(widget: FileButtons, files: File[]): void {
     let pending = files.map(file => uploadFile(widget, file));
-    Promise.all(pending).then(() => {
-      widget.model.refresh();
-    }).catch(error => {
-      utils.showErrorMessage(widget, 'Upload Error', error);
+    Promise.all(pending).catch(error => {
+      utils.showErrorMessage('Upload Error', error);
     });
   }
 

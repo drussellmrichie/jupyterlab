@@ -2,40 +2,6 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  NotebookPanel, NotebookWidgetFactory,
-  NotebookModelFactory, NotebookActions
-} from 'jupyterlab/lib/notebook';
-
-import {
-  CodeMirrorNotebookPanelRenderer
-} from 'jupyterlab/lib/notebook/codemirror/notebook/panel';
-
-import {
-  IServiceManager, createServiceManager
-} from 'jupyter-js-services';
-
-import {
-  DocumentManager
-} from 'jupyterlab/lib/docmanager';
-
-import {
-  DocumentRegistry, restartKernel, selectKernelForContext
-} from 'jupyterlab/lib/docregistry';
-
-import {
-  RenderMime
-} from 'jupyterlab/lib/rendermime';
-
-import {
-  HTMLRenderer, LatexRenderer, ImageRenderer, TextRenderer,
-  JavascriptRenderer, SVGRenderer, MarkdownRenderer
-} from 'jupyterlab/lib/renderers';
-
-import {
-  defaultSanitizer
-} from 'jupyterlab/lib/sanitizer';
-
-import {
   MimeData
 } from 'phosphor/lib/core/mimedata';
 
@@ -58,6 +24,40 @@ import {
 import {
   Widget
 } from 'phosphor/lib/ui/widget';
+
+import {
+  ServiceManager
+} from '@jupyterlab/services';
+
+import {
+  NotebookPanel, NotebookWidgetFactory,
+  NotebookModelFactory, NotebookActions
+} from 'jupyterlab/lib/notebook';
+
+import {
+  CodeMirrorNotebookPanelRenderer
+} from 'jupyterlab/lib/notebook/codemirror/notebook/panel';
+
+import {
+  DocumentManager
+} from 'jupyterlab/lib/docmanager';
+
+import {
+  DocumentRegistry, restartKernel, selectKernelForContext
+} from 'jupyterlab/lib/docregistry';
+
+import {
+  RenderMime
+} from 'jupyterlab/lib/rendermime';
+
+import {
+  HTMLRenderer, LatexRenderer, ImageRenderer, TextRenderer,
+  JavascriptRenderer, SVGRenderer, MarkdownRenderer
+} from 'jupyterlab/lib/renderers';
+
+import {
+  defaultSanitizer
+} from 'jupyterlab/lib/sanitizer';
 
 import 'jupyterlab/lib/default-theme/index.css';
 import '../index.css';
@@ -90,13 +90,14 @@ const cmdIds = {
 
 
 function main(): void {
-  createServiceManager().then(manager => {
+  let manager = new ServiceManager();
+  manager.ready.then(() => {
     createApp(manager);
   });
 }
 
 
-function createApp(manager: IServiceManager): void {
+function createApp(manager: ServiceManager.IManager): void {
   // Initialize the keymap manager with the bindings.
   let commands = new CommandRegistry();
   let keymap = new Keymap({ commands });
@@ -142,16 +143,17 @@ function createApp(manager: IServiceManager): void {
   let mFactory = new NotebookModelFactory();
   let clipboard = new MimeData();
   let renderer = CodeMirrorNotebookPanelRenderer.defaultRenderer;
-  let wFactory = new NotebookWidgetFactory(rendermime, clipboard, renderer);
-  docRegistry.addModelFactory(mFactory);
-  docRegistry.addWidgetFactory(wFactory, {
-    displayName: 'Notebook',
+  let wFactory = new NotebookWidgetFactory({
+    name: 'Notebook',
     modelName: 'notebook',
     fileExtensions: ['.ipynb'],
     defaultFor: ['.ipynb'],
     preferKernel: true,
-    canStartKernel: true
+    canStartKernel: true,
+    rendermime, clipboard, renderer
   });
+  docRegistry.addModelFactory(mFactory);
+  docRegistry.addWidgetFactory(wFactory);
 
   let nbWidget = docManager.open(NOTEBOOK) as NotebookPanel;
   let palette = new CommandPalette({ commands, keymap });
@@ -186,7 +188,7 @@ function createApp(manager: IServiceManager): void {
   });
   commands.addCommand(cmdIds.switchKernel, {
     label: 'Switch Kernel',
-    execute: () => selectKernelForContext(nbWidget.context, nbWidget.node)
+    execute: () => selectKernelForContext(nbWidget.context, manager.sessions, nbWidget.node)
   });
   commands.addCommand(cmdIds.runAndAdvance, {
     label: 'Run and Advance',

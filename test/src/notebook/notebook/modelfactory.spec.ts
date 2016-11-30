@@ -25,16 +25,16 @@ describe('notebook/notebook/modelfactory', () => {
 
     });
 
-    describe('#type', () => {
+    describe('#contentType', () => {
 
       it('should get the file type', () => {
         let factory = new NotebookModelFactory();
-        expect(factory.fileType).to.be('notebook');
+        expect(factory.contentType).to.be('notebook');
       });
 
     });
 
-    describe('#format', () => {
+    describe('#fileFormat', () => {
 
       it('should get the file format', () => {
         let factory = new NotebookModelFactory();
@@ -83,7 +83,7 @@ describe('notebook/notebook/modelfactory', () => {
         let factory = new NotebookModelFactory();
         let model = factory.createNew();
         expect(model.cells.length).to.be(1);
-        expect(model.cells.get(0).type).to.be('code');
+        expect(model.cells.at(0).type).to.be('code');
       });
 
       it('should accept a language preference', () => {

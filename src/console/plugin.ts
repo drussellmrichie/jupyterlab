@@ -2,16 +2,12 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  ContentsManager, IKernel, ISession, utils
-} from 'jupyter-js-services';
+  ContentsManager, Kernel, Session, utils
+} from '@jupyterlab/services';
 
 import {
   JSONObject
 } from 'phosphor/lib/algorithm/json';
-
-import {
-  FocusTracker
-} from 'phosphor/lib/ui/focustracker';
 
 import {
   Menu
@@ -30,6 +26,10 @@ import {
 } from '../common/dates';
 
 import {
+  InstanceTracker
+} from '../common/instancetracker';
+
+import {
   selectKernel
 } from '../docregistry';
 
@@ -40,6 +40,10 @@ import {
 import {
   IInspector
 } from '../inspector';
+
+import {
+  ILayoutRestorer
+} from '../layoutrestorer';
 
 import {
   IMainMenu
@@ -54,16 +58,21 @@ import {
 } from '../services';
 
 import {
-  ConsolePanel, ConsoleContent
-} from './';
+  IStateDB
+} from '../statedb';
+
+import {
+  IConsoleTracker, ConsolePanel, ConsoleContent
+} from './index';
 
 
 /**
- * The console extension.
+ * The console widget tracker provider.
  */
 export
-const consoleExtension: JupyterLabPlugin<void> = {
-  id: 'jupyter.extensions.console',
+const consoleTrackerProvider: JupyterLabPlugin<IConsoleTracker> = {
+  id: 'jupyter.services.console-tracker',
+  provides: IConsoleTracker,
   requires: [
     IServiceManager,
     IRenderMime,
@@ -71,7 +80,9 @@ const consoleExtension: JupyterLabPlugin<void> = {
     IInspector,
     ICommandPalette,
     IPathTracker,
-    ConsoleContent.IRenderer
+    ConsoleContent.IRenderer,
+    IStateDB,
+    ILayoutRestorer
   ],
   activate: activateConsole,
   autoStart: true
@@ -86,16 +97,21 @@ const LANDSCAPE_ICON_CLASS = 'jp-MainAreaLandscapeIcon';
 /**
  * The class name for the console icon from the default theme.
  */
-const CONSOLE_ICON_CLASS = 'jp-ImageConsole';
+const CONSOLE_ICON_CLASS = 'jp-ImageCodeConsole';
+
+/**
+ * A regex for console names.
+ */
+const CONSOLE_REGEX = /^console-(\d)+-[0-9a-f]+$/;
 
 
 /**
- * The interface for a start console.
+ * The arguments used to create a console.
  */
 interface ICreateConsoleArgs extends JSONObject {
-  sessionId?: string;
+  id?: string;
   path?: string;
-  kernel: IKernel.IModel;
+  kernel?: Kernel.IModel;
   preferredLanguage?: string;
 }
 
@@ -103,83 +119,66 @@ interface ICreateConsoleArgs extends JSONObject {
 /**
  * Activate the console extension.
  */
-function activateConsole(app: JupyterLab, services: IServiceManager, rendermime: IRenderMime, mainMenu: IMainMenu, inspector: IInspector, palette: ICommandPalette, pathTracker: IPathTracker, renderer: ConsoleContent.IRenderer): void {
-  let tracker = new FocusTracker<ConsolePanel>();
+function activateConsole(app: JupyterLab, services: IServiceManager, rendermime: IRenderMime, mainMenu: IMainMenu, inspector: IInspector, palette: ICommandPalette, pathTracker: IPathTracker, renderer: ConsoleContent.IRenderer, state: IStateDB, layout: ILayoutRestorer): IConsoleTracker {
   let manager = services.sessions;
+
   let { commands, keymap } = app;
   let category = 'Console';
-
-  let menu = new Menu({ commands, keymap });
-  menu.title.label = 'Console';
-
-  let submenu: Menu = null;
   let command: string;
+  let menu = new Menu({ commands, keymap });
 
-  // Set the main menu title.
-  menu.title.label = 'Console';
-
-  // Add the ability to create new consoles for each kernel.
-  let specs = services.kernelspecs;
-  let displayNameMap: { [key: string]: string } = Object.create(null);
-  let kernelNameMap: { [key: string]: string } = Object.create(null);
-  for (let kernelName in specs.kernelspecs) {
-    let displayName = specs.kernelspecs[kernelName].spec.display_name;
-    kernelNameMap[displayName] = kernelName;
-    displayNameMap[kernelName] = displayName;
-  }
-  let displayNames = Object.keys(kernelNameMap).sort((a, b) => {
-    return a.localeCompare(b);
+  // Create an instance tracker for all console panels.
+  const tracker = new InstanceTracker<ConsolePanel>({
+    restore: {
+      state, layout,
+      command: 'console:create',
+      args: panel => ({ id: panel.content.session.id }),
+      name: panel => panel.content.session && panel.content.session.id,
+      namespace: 'console',
+      when: [app.started, manager.ready],
+      registry: app.commands
+    }
   });
 
-  // If there are available kernels, populate the "New" menu item.
-  if (displayNames.length) {
-    submenu = new Menu({ commands, keymap });
-    submenu.title.label = 'New';
-    menu.addItem({ type: 'submenu', menu: submenu });
-  }
+  // Sync tracker and set the source of the code inspector.
+  app.shell.currentChanged.connect((sender, args) => {
+    let widget = tracker.sync(args.newValue);
+    if (widget) {
+      inspector.source = widget.content.inspectionHandler;
+    }
+  });
 
-  for (let displayName of displayNames) {
-    command = `console:create-${kernelNameMap[displayName]}`;
-    commands.addCommand(command, {
-      label: `${displayName} console`,
-      execute: () => {
-        let name = `${kernelNameMap[displayName]}`;
-        commands.execute('console:create', { kernel: { name } });
-      }
-    });
-    palette.addItem({ command, category });
-    submenu.addItem({ command });
-  }
+  // Set the main menu title.
+  menu.title.label = category;
+
+  command = 'console:create-new';
+  commands.addCommand(command, {
+    label: 'Start New Console',
+    execute: () => commands.execute('console:create', { })
+  });
+  palette.addItem({ command, category });
+  menu.addItem({ command });
 
   command = 'console:clear';
   commands.addCommand(command, {
     label: 'Clear Cells',
     execute: () => {
-      if (tracker.currentWidget) {
-        tracker.currentWidget.content.clear();
+      let current = tracker.currentWidget;
+      if (current) {
+        current.content.clear();
       }
     }
   });
   palette.addItem({ command, category });
   menu.addItem({ command });
 
-
-  command = 'console:dismiss-completer';
-  commands.addCommand(command, {
-    execute: () => {
-      if (tracker.currentWidget) {
-        tracker.currentWidget.content.dismissCompleter();
-      }
-    }
-  });
-
-
   command = 'console:run';
   commands.addCommand(command, {
     label: 'Run Cell',
     execute: () => {
-      if (tracker.currentWidget) {
-        tracker.currentWidget.content.execute();
+      let current = tracker.currentWidget;
+      if (current) {
+        current.content.execute();
       }
     }
   });
@@ -191,8 +190,9 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
   commands.addCommand(command, {
     label: 'Run Cell (forced)',
     execute: () => {
-      if (tracker.currentWidget) {
-        tracker.currentWidget.content.execute(true);
+      let current = tracker.currentWidget;
+      if (current) {
+        current.content.execute(true);
       }
     }
   });
@@ -203,8 +203,9 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
   commands.addCommand(command, {
     label: 'Insert Line Break',
     execute: () => {
-      if (tracker.currentWidget) {
-        tracker.currentWidget.content.insertLinebreak();
+      let current = tracker.currentWidget;
+      if (current) {
+        current.content.insertLinebreak();
       }
     }
   });
@@ -215,10 +216,11 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
   commands.addCommand(command, {
     label: 'Interrupt Kernel',
     execute: () => {
-      if (tracker.currentWidget) {
-        let kernel = tracker.currentWidget.content.session.kernel;
+      let current = tracker.currentWidget;
+      if (current) {
+        let kernel = current.content.session.kernel;
         if (kernel) {
-          kernel.interrupt();
+          return kernel.interrupt();
         }
       }
     }
@@ -226,14 +228,23 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
   palette.addItem({ command, category });
   menu.addItem({ command });
 
+  let count = 0;
 
   command = 'console:create';
   commands.addCommand(command, {
     execute: (args: ICreateConsoleArgs) => {
+      args = args || {};
+
+      let name = `Console ${++count}`;
+
       // If we get a session, use it.
-      if (args.sessionId) {
-        return manager.connectTo(args.sessionId).then(session => {
-          createConsole(session);
+      if (args.id) {
+        return manager.ready.then(() => {
+          return manager.connectTo(args.id);
+        }).then(session => {
+          name = session.path.split('/').pop();
+          name = `Console ${name.match(CONSOLE_REGEX)[1]}`;
+          createConsole(session, name);
           return session.id;
         });
       }
@@ -244,21 +255,21 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
       if (ContentsManager.extname(path)) {
         path = ContentsManager.dirname(path);
       }
-      path = `${path}/console-${utils.uuid()}`;
+      path = `${path}/console-${count}-${utils.uuid()}`;
 
       // Get the kernel model.
-      return getKernel(args).then(kernel => {
-        if (!kernel) {
+      return manager.ready.then(() => getKernel(args, name)).then(kernel => {
+        if (!kernel || (kernel && !kernel.id && !kernel.name)) {
           return;
         }
         // Start the session.
-        let options: ISession.IOptions = {
+        let options: Session.IOptions = {
           path,
           kernelName: kernel.name,
           kernelId: kernel.id
         };
         return manager.startNew(options).then(session => {
-          createConsole(session);
+          createConsole(session, name);
           return session.id;
         });
       });
@@ -269,11 +280,28 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
   commands.addCommand(command, {
     execute: (args: JSONObject) => {
       let id = args['id'];
-      for (let i = 0; i < tracker.widgets.length; i++) {
-        let widget = tracker.widgets.at(i);
+      tracker.find(widget => {
         if (widget.content.session.id === id) {
           widget.content.inject(args['code'] as string);
+          return true;
         }
+      });
+    }
+  });
+
+  command = 'console:open';
+  commands.addCommand(command, {
+    execute: (args: JSONObject) => {
+      let id = args['id'];
+      let widget = tracker.find(value => {
+        if (value.content.session.id === id) {
+          return true;
+        }
+      });
+      if (widget) {
+        app.shell.activateMain(widget.id);
+      } else {
+        app.commands.execute('console:create', { id });
       }
     }
   });
@@ -281,15 +309,15 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
   /**
    * Get the kernel given the create args.
    */
-  function getKernel(args: ICreateConsoleArgs): Promise<IKernel.IModel> {
+  function getKernel(args: ICreateConsoleArgs, name: string): Promise<Kernel.IModel> {
     if (args.kernel) {
       return Promise.resolve(args.kernel);
     }
-    return manager.listRunning().then((sessions: ISession.IModel[]) => {
+    return manager.ready.then(() => {
       let options = {
-        name: 'New Console',
-        specs,
-        sessions,
+        name,
+        specs: manager.specs,
+        sessions: manager.running(),
         preferredLanguage: args.preferredLanguage || '',
         host: document.body
       };
@@ -297,50 +325,51 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
     });
   }
 
-
-  let count = 0;
+  let id = 0; // The ID counter for notebook panels.
 
   /**
    * Create a console for a given session.
+   *
+   * #### Notes
+   * The manager must be ready before calling this function.
    */
-  function createConsole(session: ISession): void {
+  function createConsole(session: Session.ISession, name: string): void {
     let panel = new ConsolePanel({
-      session,
-      rendermime: rendermime.clone(),
-      renderer: renderer
+      session, rendermime: rendermime.clone(), renderer
     });
-    count++;
-    let displayName = displayNameMap[session.kernel.name];
-    let label = `Console ${count}`;
+    let specs = manager.specs;
+    let displayName = specs.kernelspecs[session.kernel.name].display_name;
     let captionOptions: Private.ICaptionOptions = {
-      label, displayName,
+      label: name,
+      displayName,
       path: session.path,
       connected: new Date()
     };
-    panel.id = `console-${session.id}`;
-    panel.title.label = label;
+    // If the console panel does not have an ID, assign it one.
+    panel.id = panel.id || `console-${++id}`;
+    panel.title.label = name;
     panel.title.caption = Private.caption(captionOptions);
     panel.title.icon = `${LANDSCAPE_ICON_CLASS} ${CONSOLE_ICON_CLASS}`;
     panel.title.closable = true;
     app.shell.addToMainArea(panel);
+    app.shell.activateMain(panel.id);
     // Update the caption of the tab with the last execution time.
     panel.content.executed.connect((sender, executed) => {
       captionOptions.executed = executed;
       panel.title.caption = Private.caption(captionOptions);
     });
-    // Set the source of the code inspector to the current console.
-    panel.activated.connect(() => {
-      inspector.source = panel.content.inspectionHandler;
-    });
     // Update the caption of the tab when the kernel changes.
     panel.content.session.kernelChanged.connect(() => {
-      let name = panel.content.session.kernel.name;
-      name = specs.kernelspecs[name].spec.display_name;
-      captionOptions.displayName = name;
+      let newName = panel.content.session.kernel.name;
+      name = specs.kernelspecs[name].display_name;
+      captionOptions.displayName = newName;
       captionOptions.connected = new Date();
       captionOptions.executed = null;
       panel.title.caption = Private.caption(captionOptions);
     });
+    // Immediately set the inspector source to the current console.
+    inspector.source = panel.content.inspectionHandler;
+    // Add the console panel to the tracker.
     tracker.add(panel);
   }
 
@@ -348,30 +377,31 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
   commands.addCommand(command, {
     label: 'Switch Kernel',
     execute: () => {
-      if (!tracker.currentWidget) {
+      let current = tracker.currentWidget;
+      if (!current) {
         return;
       }
-      let widget = tracker.currentWidget.content;
+      let widget = current.content;
       let session = widget.session;
       let lang = '';
-      if (session.kernel) {
-        lang = specs.kernelspecs[session.kernel.name].spec.language;
-      }
-      manager.listRunning().then((sessions: ISession.IModel[]) => {
+      manager.ready.then(() => {
+        let specs = manager.specs;
+        if (session.kernel) {
+          lang = specs.kernelspecs[session.kernel.name].language;
+        }
         let options = {
           name: widget.parent.title.label,
           specs,
-          sessions,
+          sessions: manager.running(),
           preferredLanguage: lang,
           kernel: session.kernel.model,
           host: widget.parent.node
         };
         return selectKernel(options);
-      }).then((kernelId: IKernel.IModel) => {
+      }).then((kernelId: Kernel.IModel) => {
+        // If the user cancels, kernelId will be void and should be ignored.
         if (kernelId) {
-          session.changeKernel(kernelId);
-        } else {
-          session.kernel.shutdown();
+          return session.changeKernel(kernelId);
         }
       });
     }
@@ -380,6 +410,7 @@ function activateConsole(app: JupyterLab, services: IServiceManager, rendermime:
   menu.addItem({ command });
 
   mainMenu.addMenu(menu, {rank: 50});
+  return tracker;
 }
 
 
@@ -440,7 +471,3 @@ namespace Private {
     return caption;
   }
 }
-
-
-
-

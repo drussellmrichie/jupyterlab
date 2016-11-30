@@ -2,10 +2,6 @@
 // Distributed under the terms of the Modified BSD License.
 
 import {
-  Widget
-} from 'phosphor/lib/ui/widget';
-
-import {
   JupyterLab, JupyterLabPlugin
 } from '../application';
 
@@ -14,12 +10,29 @@ import {
 } from '../commandpalette';
 
 import {
+  InstanceTracker
+} from '../common/instancetracker';
+
+import {
   IPathTracker
 } from '../filebrowser';
 
 import {
+  ILayoutRestorer
+} from '../layoutrestorer';
+
+import {
   IServiceManager
 } from '../services';
+
+import {
+  IStateDB
+} from '../statedb';
+
+import {
+  LandingModel, LandingWidget
+} from './widget';
+
 
 /**
  * The landing page extension.
@@ -27,128 +40,72 @@ import {
 export
 const landingExtension: JupyterLabPlugin<void> = {
   id: 'jupyter.extensions.landing',
-  requires: [IServiceManager, IPathTracker, ICommandPalette],
+  requires: [
+    IPathTracker, ICommandPalette, IServiceManager, IStateDB, ILayoutRestorer
+  ],
   activate: activateLanding,
   autoStart: true
 };
 
+/**
+ * The class name added to the landing plugin.
+ */
+const LANDING_CLASS = 'jp-Landing';
 
-function activateLanding(app: JupyterLab, services: IServiceManager, pathTracker: IPathTracker, palette: ICommandPalette): void {
-  let widget = new Widget();
-  widget.id = 'landing-jupyterlab';
-  widget.title.label = 'Launcher';
-  widget.title.closable = true;
-  widget.addClass('jp-Landing');
 
-  let dialog = document.createElement('div');
-  dialog.className = 'jp-Landing-dialog';
-  widget.node.appendChild(dialog);
-
-  let logo = document.createElement('span');
-  logo.className = 'jp-ImageJupyterLab jp-Landing-logo';
-  dialog.appendChild(logo);
-
-  let previewMessages = ['super alpha preview', 'very alpha preview', 'extremely alpha preview', 'exceedingly alpha preview', 'alpha alpha preview'];
-  let subtitle = document.createElement('span');
-  let index = Math.floor(Math.random() * previewMessages.length);
-  subtitle.textContent = previewMessages[index];
-  subtitle.className = 'jp-Landing-subtitle';
-  dialog.appendChild(subtitle);
-
-  let tour = document.createElement('span');
-  tour.className = 'jp-Landing-tour';
-  dialog.appendChild(tour);
-  tour.addEventListener('click', () => {
-    app.commands.execute('about-jupyterlab:show', void 0);
+function activateLanding(app: JupyterLab, pathTracker: IPathTracker, palette: ICommandPalette, services: IServiceManager, state: IStateDB, layout: ILayoutRestorer): void {
+  const category = 'Help';
+  const command = 'jupyterlab-landing:show';
+  const model = new LandingModel(services.terminals.isAvailable());
+  const tracker = new InstanceTracker<LandingWidget>({
+    restore: {
+      state, layout, command,
+      args: widget => null,
+      name: widget => 'landing',
+      namespace: 'landing',
+      when: app.started,
+      registry: app.commands
+    }
   });
 
-  let header = document.createElement('span');
-  header.textContent = 'Start a new activity';
-  header.className = 'jp-Landing-header';
-  dialog.appendChild(header);
+  let widget: LandingWidget;
 
-  let body = document.createElement('div');
-  body.className = 'jp-Landing-body';
-  dialog.appendChild(body);
-
-  for (let name of ['Notebook', 'Code Console', 'Terminal', 'Text Editor']) {
-    let column = document.createElement('div');
-    body.appendChild(column);
-    column.className = 'jp-Landing-column';
-
-    let img = document.createElement('span');
-    let imgName = name.replace(' ', '');
-    img.className = `jp-Image${imgName} jp-Landing-image`;
-
-    column.appendChild(img);
-
-    let text = document.createElement('span');
-    text.textContent = name;
-    text.className = 'jp-Landing-text';
-    column.appendChild(text);
+  function newWidget(): LandingWidget {
+    let widget = new LandingWidget(app);
+    widget.model = model;
+    widget.id = 'landing-jupyterlab';
+    widget.title.label = 'Launcher';
+    widget.title.closable = true;
+    widget.addClass(LANDING_CLASS);
+    tracker.add(widget);
+    return widget;
   }
 
-  let img = body.getElementsByClassName('jp-ImageNotebook')[0];
-  img.addEventListener('click', () => {
-    app.commands.execute('file-operations:new-notebook', void 0);
-  });
-
-  img = body.getElementsByClassName('jp-ImageCodeConsole')[0];
-  img.addEventListener('click', () => {
-    app.commands.execute(`console:create-${services.kernelspecs.default}`, void 0);
-  });
-
-  img = body.getElementsByClassName('jp-ImageTextEditor')[0];
-  img.addEventListener('click', () => {
-    app.commands.execute('file-operations:new-text-file', void 0);
-  });
-
-  img = body.getElementsByClassName('jp-ImageTerminal')[0];
-  img.addEventListener('click', () => {
-    app.commands.execute('terminal:create-new', void 0);
-  });
-
-  let cwd = document.createElement('div');
-  cwd.className = 'jp-Landing-cwd';
-
-
-  let folderImage = document.createElement('span');
-  folderImage.className = 'jp-Landing-folder';
-
-
-  let path = document.createElement('span');
-  path.textContent = 'home';
-  pathTracker.pathChanged.connect(() => {
-    if (pathTracker.path.length > 0) {
-      path.textContent = 'home > ';
-      let path2 = pathTracker.path;
-      path2 = path2.replace('/', ' > ');
-      path.textContent += path2;
-    } else {
-      path.textContent = 'home';
-    }
-  });
-  path.className = 'jp-Landing-path';
-
-  cwd.appendChild(folderImage);
-  cwd.appendChild(path);
-  dialog.appendChild(cwd);
-
-  app.commands.addCommand('jupyterlab-launcher:show', {
-    label: 'Show Launcher',
+  app.commands.addCommand(command, {
+    label: 'Show Landing',
     execute: () => {
-      if (!widget.isAttached) {
+      if (!widget || widget.isDisposed) {
+        widget = newWidget();
         app.shell.addToMainArea(widget);
-      } else {
-        app.shell.activateMain(widget.id);
       }
+      app.shell.activateMain(widget.id);
     }
   });
 
-  palette.addItem({
-    command: 'jupyterlab-launcher:show',
-    category: 'Help'
+  pathTracker.pathChanged.connect(() => {
+    if (pathTracker.path.length) {
+      model.path = 'home > ' + pathTracker.path.replace('/', ' > ');
+    } else {
+      model.path = 'home';
+    }
   });
 
-  app.shell.addToMainArea(widget);
+  palette.addItem({ category, command });
+
+  // Only create a landing page if there are no other tabs open.
+  layout.restored.then(() => {
+    if (app.shell.mainAreaIsEmpty) {
+      app.commands.execute(command, void 0);
+    }
+  });
 }
